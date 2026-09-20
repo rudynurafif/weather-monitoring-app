@@ -1,0 +1,87 @@
+%% ===========================================================================
+%% Alur data: dari sensor fisik sampai ter-render di chart
+%% Sumber Mermaid; ter-render di DATA-FLOW.md
+%%
+%% Catatan teknis: seluruh node sengaja dideklarasikan di dalam subgraph-nya
+%% lebih dulu, baru panah antar-subgraph ditulis di bagian bawah. Kalau sebuah
+%% node pertama kali disebut di luar subgraph, Mermaid menempatkannya di level
+%% teratas dan pengelompokannya jadi tidak sesuai maksud.
+%% ===========================================================================
+
+flowchart TD
+    subgraph LAPANGAN["Di lapangan"]
+        direction TB
+        S["Sensor fisik<br/>suhu, kelembapan, hujan, angin"]
+        FW["Firmware device<br/>baca tiap 60 detik"]
+        BUF[("Buffer lokal<br/>dipakai saat jaringan putus")]
+        S --> FW
+        FW -->|"gagal kirim"| BUF
+        BUF -->|"online kembali"| FW
+    end
+
+    subgraph BACKEND["Backend NestJS - jalur ingestion"]
+        direction TB
+        AUTH{"1 - Autentikasi device<br/>header X-Device-Key"}
+        RATE{"2 - Rate limit<br/>kunci = device_id"}
+        VAL{"3 - Validasi payload<br/>bentuk lalu rentang"}
+        NORM["4 - Normalisasi<br/>ts epoch ke timestamptz UTC<br/>s ke sensor_type_id + channel<br/>batch diurutkan menurut ts"]
+        ENR["5 - Enrichment<br/>resolusi slot sensor pada device_time<br/>terapkan kalibrasi yang berlaku<br/>hitung delta sensor kumulatif<br/>susun quality_flags"]
+        DEDUP["6 - Dedup dan simpan<br/>satu bulk INSERT<br/>ON CONFLICT DO NOTHING"]
+
+        R401["401 INVALID_DEVICE_CREDENTIAL"]
+        R404["404 DEVICE_NOT_REGISTERED"]
+        R403["403 DEVICE_NOT_ACTIVE"]
+        R429["429 RATE_LIMIT_EXCEEDED<br/>+ header Retry-After"]
+        R422["422 VALIDATION_FAILED<br/>detail per field"]
+        R413["413 BATCH_TOO_LARGE"]
+
+        AUTH -->|"kredensial salah"| R401
+        AUTH -->|"device tidak terdaftar"| R404
+        AUTH -->|"status DECOMMISSIONED"| R403
+        AUTH -->|"lolos"| RATE
+        RATE -->|"melebihi kuota"| R429
+        RATE -->|"lolos"| VAL
+        VAL -->|"JSON rusak atau field wajib hilang"| R422
+        VAL -->|"batch lebih dari 500"| R413
+        VAL -->|"lolos"| NORM
+        NORM --> ENR
+        ENR --> DEDUP
+    end
+
+    subgraph PENYIMPANAN["Penyimpanan"]
+        direction TB
+        DB[("sensor_reading<br/>hypertable, append-only")]
+        HB[("device_heartbeat<br/>+ device.last_seen_at")]
+        AGGT[("reading_aggregate")]
+    end
+
+    subgraph AGREGASI["Agregasi di luar jalur request"]
+        direction TB
+        AGGQ[["7 - Antrean bucket kotor<br/>tiap bucket yang tersentuh ditandai"]]
+        AGG["8 - Worker agregasi<br/>hitung ulang bucket 1h dan 1d dari nol<br/>termasuk bucket lama yang baru terisi"]
+        AGGQ --> AGG
+    end
+
+    subgraph QUERY["Lapisan query"]
+        direction TB
+        API["9 - API query<br/>sumber dipilih menurut lebar rentang<br/>raw sampai 24 jam<br/>1h untuk 7-30 hari<br/>1d di atasnya"]
+    end
+
+    subgraph FRONTEND["Frontend Next.js"]
+        direction TB
+        FE["10 - Konversi ke WIB<br/>satu-satunya tempat timezone berubah"]
+        CHART["11 - Chart<br/>gap ditampilkan sebagai garis putus"]
+        FE --> CHART
+    end
+
+    %% --- panah antar bagian ---
+    FW -->|"HTTPS POST<br/>single / batch / heartbeat"| AUTH
+    DEDUP -->|"row baru"| DB
+    DEDUP -->|"row bentrok dihitung sebagai duplicated,<br/>bukan error"| DB
+    DEDUP --> HB
+    DEDUP -->|"response 200 atau 207"| FW
+    DB --> AGGQ
+    AGG --> AGGT
+    DB --> API
+    AGGT --> API
+    API -->|"JSON kolom terpisah, timestamp UTC"| FE

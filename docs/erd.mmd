@@ -1,0 +1,199 @@
+%% ===========================================================================
+%% ERD Platform Monitoring Stasiun Cuaca (sumber Mermaid)
+%%
+%% Ter-render otomatis di GitHub lewat ERD.md. Untuk melihatnya di luar GitHub,
+%% tempel isi file ini ke https://mermaid.live
+%%
+%% Catatan kardinalitas:
+%%   ||--o{  = satu ke nol-atau-banyak
+%%   ||--|{  = satu ke satu-atau-banyak
+%%   }o--||  = nol-atau-banyak ke satu
+%%
+%% Relasi device <-> sensor pada dasarnya N-M SEPANJANG WAKTU (satu sensor bisa
+%% singgah di banyak device, satu device menampung banyak sensor), dan
+%% dipecahkan oleh tabel penghubung sensor_installation yang membawa dimensi
+%% waktu (installed_at, removed_at).
+%% ===========================================================================
+
+erDiagram
+    location ||--o{ device : "menampung"
+    device   ||--|{ device_credential : "diautentikasi oleh"
+    device   ||--o{ device_status_history : "mencatat transisi"
+    device   ||--o{ device_heartbeat : "melaporkan kesehatan"
+    device   ||--o{ sensor_installation : "menjadi tempat pemasangan"
+    device   ||--o{ sensor_reading : "menghasilkan"
+    device   ||--o{ reading_aggregate : "diringkas menjadi"
+
+    sensor_type ||--o{ sensor : "mengklasifikasikan"
+    sensor_type ||--o{ sensor_installation : "menentukan slot"
+    sensor_type ||--o{ sensor_reading : "memberi satuan dan rentang"
+    sensor_type ||--o{ reading_aggregate : "memberi satuan"
+
+    sensor ||--o{ sensor_installation : "dipasang lewat"
+    sensor ||--o{ sensor_calibration : "dikoreksi oleh"
+    sensor ||--o{ sensor_reading : "menjadi sumber"
+
+    sensor_installation ||--o{ sensor_reading : "mengikat pembacaan ke sensor"
+    sensor_calibration  ||--o{ sensor_reading : "diterapkan pada"
+
+    user ||--o{ device_status_history : "mengubah status"
+    user ||--o{ sensor_installation : "memasang"
+    user ||--o{ sensor_calibration : "mengkalibrasi"
+
+    location {
+        uuid id PK
+        varchar name UK "unik"
+        decimal latitude "9,6"
+        decimal longitude "9,6"
+        decimal altitude_m "7,2"
+        varchar description
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    user {
+        uuid id PK
+        varchar email UK
+        varchar password_hash "scrypt"
+        varchar full_name
+        enum role "ADMIN OPERATOR VIEWER"
+        boolean is_active
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    device {
+        uuid id PK
+        varchar device_code UK "WS-GRT-001, dikirim di payload"
+        varchar name
+        uuid location_id FK "nullable"
+        enum status "PROVISIONED ACTIVE MAINTENANCE DECOMMISSIONED"
+        varchar firmware_version
+        timestamptz installed_at
+        timestamptz last_seen_at "denormalisasi untuk query heartbeat"
+        float last_battery_v
+        int last_rssi
+        timestamptz deleted_at "soft delete"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    device_credential {
+        uuid id PK
+        uuid device_id FK
+        varchar key_id UK "bagian publik kredensial"
+        varchar secret_hash "SHA-256 secret + pepper"
+        varchar secret_prefix "untuk ditampilkan di UI"
+        enum status "ACTIVE REVOKED"
+        timestamptz expires_at "masa tenggang saat rotasi"
+        timestamptz revoked_at
+        timestamptz last_used_at
+        timestamptz created_at
+    }
+
+    device_status_history {
+        bigint id PK
+        uuid device_id FK
+        enum from_status "NULL pada baris pertama"
+        enum to_status
+        varchar reason
+        uuid changed_by_user_id FK "nullable"
+        timestamptz changed_at
+    }
+
+    sensor_type {
+        int id PK
+        varchar key UK "temp_air humidity pressure"
+        varchar display_name
+        varchar unit
+        float min_valid "batas wajar, pelanggaran ditandai"
+        float max_valid
+        int precision
+        boolean is_cumulative "true untuk rain_counter"
+        float unit_per_count "1 tip = 0.2 mm"
+        boolean is_circular "true untuk wind_dir"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    sensor {
+        uuid id PK
+        varchar serial_number UK "identitas fisik yang berpindah"
+        int sensor_type_id FK
+        varchar manufacturer
+        varchar model
+        enum status "IN_STOCK INSTALLED MAINTENANCE RETIRED"
+        timestamptz deleted_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    sensor_installation {
+        uuid id PK
+        uuid sensor_id FK
+        uuid device_id FK
+        int sensor_type_id FK "denormalisasi untuk jalur ingestion"
+        smallint channel "membedakan dua sensor setipe"
+        timestamptz installed_at
+        timestamptz removed_at "NULL = masih terpasang"
+        uuid installed_by_user_id FK
+        varchar notes
+        timestamptz created_at
+    }
+
+    sensor_calibration {
+        uuid id PK
+        uuid sensor_id FK
+        float offset "nilai = mentah * scale + offset"
+        float scale
+        timestamptz effective_from
+        timestamptz effective_to "NULL = sampai kalibrasi berikutnya"
+        uuid created_by_user_id FK
+        varchar notes
+        timestamptz created_at
+    }
+
+    sensor_reading {
+        uuid device_id PK "hypertable"
+        int sensor_type_id PK
+        smallint channel PK
+        timestamptz device_time PK "kolom partisi, sumbu waktu"
+        timestamptz server_time "waktu diterima server"
+        uuid sensor_id FK "hasil resolusi instalasi"
+        uuid installation_id FK
+        float raw_value "tidak pernah diubah"
+        float value "hasil kalibrasi, NULL bila tak layak"
+        float delta_value "selisih sensor kumulatif dalam mm"
+        int quality_flags "bitmask"
+        int seq "diagnosa saja, bukan kunci dedup"
+        uuid calibration_id FK
+    }
+
+    device_heartbeat {
+        uuid device_id PK "hypertable"
+        timestamptz device_time PK
+        timestamptz server_time
+        float battery_v
+        int rssi
+        bigint uptime_s
+        varchar firmware_version
+        varchar source "HEARTBEAT atau TELEMETRY"
+    }
+
+    reading_aggregate {
+        uuid device_id PK
+        int sensor_type_id PK
+        smallint channel PK
+        enum bucket_width PK "MINUTE_1 HOUR_1 DAY_1"
+        timestamptz bucket_start PK
+        float avg_value
+        float min_value
+        float max_value
+        float sum_delta "curah hujan per bucket"
+        float last_value
+        float sum_sin "komponen vektor arah angin"
+        float sum_cos
+        int count_readings
+        int count_good
+        timestamptz computed_at
+    }

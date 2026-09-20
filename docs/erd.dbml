@@ -1,0 +1,284 @@
+// ============================================================================
+// ERD Platform Monitoring Stasiun Cuaca
+//
+// Sumber diagram untuk https://dbdiagram.io — salin seluruh isi file ini ke
+// sana untuk melihat versi visualnya. Versi Mermaid dari diagram yang sama ada
+// di erd.mmd dan sudah ter-render inline di ERD.md.
+//
+// Skema yang benar-benar dieksekusi adalah apps/api/prisma/schema.prisma;
+// file ini adalah representasi visualnya dan dijaga agar selalu sinkron.
+// ============================================================================
+
+Project weather_station {
+  database_type: 'PostgreSQL 16 + TimescaleDB'
+  Note: 'Platform ingestion, agregasi, dan visualisasi data stasiun cuaca'
+}
+
+// ---------------------------------------------------------------------------
+// Enum
+// ---------------------------------------------------------------------------
+
+Enum device_status {
+  PROVISIONED   [note: 'Terdaftar, kredensial ada, belum dipasang di lapangan']
+  ACTIVE        [note: 'Beroperasi; hanya status ini yang boleh mengirim telemetri']
+  MAINTENANCE   [note: 'Diservis; data diterima tapi ditandai']
+  DECOMMISSIONED [note: 'Pensiun permanen; ingestion ditolak, data historis tetap ada']
+}
+
+Enum credential_status {
+  ACTIVE
+  REVOKED
+}
+
+Enum sensor_status {
+  IN_STOCK
+  INSTALLED
+  MAINTENANCE
+  RETIRED
+}
+
+Enum user_role {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+Enum bucket_width {
+  MINUTE_1
+  HOUR_1
+  DAY_1
+}
+
+// ---------------------------------------------------------------------------
+// Master data
+// ---------------------------------------------------------------------------
+
+Table location {
+  id uuid [pk]
+  name varchar(120) [not null, unique]
+  latitude decimal(9,6) [not null, note: 'Decimal, bukan float, agar nilai yang ditampilkan persis sama dengan yang dimasukkan']
+  longitude decimal(9,6) [not null]
+  altitude_m decimal(7,2) [not null]
+  description varchar(255)
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null]
+
+  Note: 'Situs/lokasi pemasangan. Dipisah dari device karena satu lokasi bisa berganti device tanpa kehilangan identitas lokasinya.'
+}
+
+Table "user" {
+  id uuid [pk]
+  email varchar(160) [not null, unique]
+  password_hash varchar(255) [not null, note: 'scrypt; plaintext tidak pernah disimpan']
+  full_name varchar(120) [not null]
+  role user_role [not null, default: 'VIEWER']
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null]
+
+  Note: 'Pengguna dashboard. Autentikasinya JWT, terpisah total dari kredensial device.'
+}
+
+// ---------------------------------------------------------------------------
+// Device
+// ---------------------------------------------------------------------------
+
+Table device {
+  id uuid [pk]
+  device_code varchar(64) [not null, unique, note: 'Identitas yang dikirim device di payload: "WS-GRT-001"']
+  name varchar(120) [not null]
+  location_id uuid [ref: > location.id, null]
+  status device_status [not null, default: 'PROVISIONED']
+  firmware_version varchar(32)
+  installed_at timestamptz
+  last_seen_at timestamptz [note: 'Denormalisasi: menjawab pertanyaan heartbeat tanpa menyentuh tabel time-series']
+  last_battery_v float
+  last_rssi int
+  deleted_at timestamptz [note: 'Soft delete; row tidak pernah benar-benar dihapus karena menjadi induk jutaan pembacaan']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null]
+
+  Indexes {
+    (status, location_id) [note: 'Filter list device pada GET /api/v1/devices']
+    last_seen_at [note: 'Query kesehatan: device yang diam > X menit']
+    deleted_at [note: 'Menyaring row yang sudah di-soft-delete']
+  }
+}
+
+Table device_credential {
+  id uuid [pk]
+  device_id uuid [not null, ref: > device.id]
+  key_id varchar(32) [not null, unique, note: 'Bagian publik; dikirim pada header X-Device-Key sebagai "<key_id>.<secret>"']
+  secret_hash varchar(64) [not null, note: 'SHA-256(secret + pepper). Pepper ada di environment, bukan di database.']
+  secret_prefix varchar(12) [not null, note: 'Untuk ditampilkan di UI: "wsk_a1b2..."']
+  status credential_status [not null, default: 'ACTIVE']
+  expires_at timestamptz [note: 'Diisi saat rotasi: masa tenggang bagi device yang sedang offline']
+  revoked_at timestamptz
+  last_used_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (device_id, status) [note: 'Mencari kredensial aktif milik satu device saat rotasi']
+  }
+}
+
+Table device_status_history {
+  id bigint [pk, increment]
+  device_id uuid [not null, ref: > device.id]
+  from_status device_status [null, note: 'NULL hanya pada baris pertama']
+  to_status device_status [not null]
+  reason varchar(255)
+  changed_by_user_id uuid [ref: > "user".id, null]
+  changed_at timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (device_id, changed_at) [note: 'Riwayat selalu dibaca per device, terbaru dulu']
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sensor
+// ---------------------------------------------------------------------------
+
+Table sensor_type {
+  id int [pk, increment]
+  key varchar(32) [not null, unique, note: 'Nilai field "s" pada payload: temp_air, humidity, ...']
+  display_name varchar(80) [not null]
+  unit varchar(16) [not null]
+  min_valid float [not null, note: 'Batas bawah wajar; pelanggaran ditandai quality_flags, tidak dibuang']
+  max_valid float [not null]
+  precision int [not null, default: 2]
+  is_cumulative boolean [not null, default: false, note: 'true untuk rain_counter: yang bermakna adalah selisih, bukan nilai absolut']
+  unit_per_count float [note: 'rain_counter: 1 tip = 0.2 mm']
+  is_circular boolean [not null, default: false, note: 'true untuk wind_dir: rata-ratanya harus vektor, bukan aritmetika']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null]
+
+  Note: 'Master data tipe sensor. Dua flag is_cumulative/is_circular membuat lapisan agregasi memilih rumus yang benar secara generik, tanpa if-else per nama sensor.'
+}
+
+Table sensor {
+  id uuid [pk]
+  serial_number varchar(64) [not null, unique, note: 'Identitas fisik yang ikut berpindah antar device']
+  sensor_type_id int [not null, ref: > sensor_type.id]
+  manufacturer varchar(80)
+  model varchar(80)
+  status sensor_status [not null, default: 'IN_STOCK']
+  deleted_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null]
+
+  Indexes {
+    (sensor_type_id, status) [note: 'Mencari sensor cadangan bertipe tertentu yang masih IN_STOCK']
+  }
+}
+
+Table sensor_installation {
+  id uuid [pk]
+  sensor_id uuid [not null, ref: > sensor.id]
+  device_id uuid [not null, ref: > device.id]
+  sensor_type_id int [not null, ref: > sensor_type.id, note: 'Denormalisasi dari sensor, supaya lookup slot di jalur ingestion tidak perlu join']
+  channel smallint [not null, default: 0, note: 'Membedakan dua sensor bertipe sama pada satu device (suhu dalam vs luar)']
+  installed_at timestamptz [not null]
+  removed_at timestamptz [null, note: 'NULL = masih terpasang']
+  installed_by_user_id uuid [ref: > "user".id, null]
+  notes varchar(255)
+  created_at timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (device_id, sensor_type_id, channel, installed_at) [note: 'Lookup terpanas: sensor mana yang memegang slot ini pada waktu T']
+    (device_id, installed_at) [note: 'Sensor apa saja yang terpasang di device ini pada waktu T']
+    (sensor_id, installed_at) [note: 'Sensor ini pernah dipasang di device mana saja']
+  }
+
+  Note: 'Inti dari ketertelusuran. Dijaga dua exclusion constraint GiST: satu sensor tidak boleh terpasang di dua tempat sekaligus, dan satu slot tidak boleh diisi dua sensor sekaligus.'
+}
+
+Table sensor_calibration {
+  id uuid [pk]
+  sensor_id uuid [not null, ref: > sensor.id]
+  "offset" float [not null, default: 0]
+  scale float [not null, default: 1]
+  effective_from timestamptz [not null]
+  effective_to timestamptz [null, note: 'NULL = berlaku sampai ada kalibrasi berikutnya']
+  created_by_user_id uuid [ref: > "user".id, null]
+  notes varchar(255)
+  created_at timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (sensor_id, effective_from) [note: 'Kalibrasi mana yang berlaku untuk sensor X pada waktu T']
+  }
+
+  Note: 'Koreksi: nilai_terkoreksi = nilai_mentah * scale + offset. Dijaga exclusion constraint agar masa berlaku tidak tumpang tindih.'
+}
+
+// ---------------------------------------------------------------------------
+// Time-series
+// ---------------------------------------------------------------------------
+
+Table sensor_reading {
+  device_time timestamptz [not null, note: 'Waktu menurut jam device. Kolom partisi hypertable dan sumbu waktu time-series.']
+  device_id uuid [not null, note: 'Disalin langsung, bukan lewat sensor, agar data lama tetap milik device lama saat sensor dipindah']
+  sensor_type_id int [not null]
+  channel smallint [not null, default: 0]
+  server_time timestamptz [not null, default: `now()`, note: 'Waktu diterima server; untuk mendeteksi clock drift dan keterlambatan']
+  sensor_id uuid [null, note: 'Hasil resolusi instalasi pada device_time; NULL bila tak ada instalasi yang cocok']
+  installation_id uuid [null]
+  raw_value float [not null, note: 'Angka apa adanya dari device. Tidak pernah diubah.']
+  value float [null, note: 'Hasil kalibrasi. NULL bila pembacaan tidak layak pakai (mis. sentinel -999).']
+  delta_value float [null, note: 'Sensor kumulatif: selisih terhadap pembacaan sebelumnya dalam satuan fisik (mm hujan)']
+  quality_flags int [not null, default: 0, note: 'Bitmask; satu pembacaan bisa bermasalah lebih dari satu cara']
+  seq int [null, note: 'Nomor urut payload; reset saat device restart, jadi tidak pernah jadi kunci idempotensi']
+  calibration_id uuid [null]
+
+  Indexes {
+    (device_id, sensor_type_id, channel, device_time) [pk, note: 'PK merangkap kunci idempotensi. Kolom "=" di depan, kolom rentang waktu paling belakang.']
+    (device_id, device_time) [note: 'Semua sensor satu device dalam rentang waktu (halaman detail stasiun)']
+    device_time [note: 'Dibuat otomatis oleh TimescaleDB saat create_hypertable']
+  }
+
+  Note: 'HYPERTABLE, chunk 7 hari, kompresi setelah 30 hari, retensi 2 tahun. Tabel dengan pertumbuhan tercepat: ~184 juta row/tahun pada 50 device x 7 sensor x 1/menit.'
+}
+
+Table device_heartbeat {
+  device_time timestamptz [not null]
+  device_id uuid [not null, ref: > device.id]
+  server_time timestamptz [not null, default: `now()`]
+  battery_v float
+  rssi int
+  uptime_s bigint
+  firmware_version varchar(32)
+  source varchar(16) [not null, default: 'HEARTBEAT', note: 'HEARTBEAT atau TELEMETRY']
+
+  Indexes {
+    (device_id, device_time) [pk]
+    device_time
+  }
+
+  Note: 'HYPERTABLE, chunk 30 hari, retensi 1 tahun. Riwayat kesehatan device; jauh lebih ringan karena tidak bercabang per sensor.'
+}
+
+Table reading_aggregate {
+  device_id uuid [not null]
+  sensor_type_id int [not null]
+  channel smallint [not null, default: 0]
+  bucket_width bucket_width [not null]
+  bucket_start timestamptz [not null, note: 'Awal bucket, dibulatkan ke bawah dalam UTC']
+  avg_value float
+  min_value float
+  max_value float
+  sum_delta float [note: 'Total delta dalam bucket = curah hujan per jam/hari dalam mm']
+  last_value float
+  sum_sin float [note: 'Komponen vektor arah angin; disimpan sebagai jumlah agar bucket jam bisa digabung jadi harian']
+  sum_cos float
+  count_readings int [not null, default: 0]
+  count_good int [not null, default: 0, note: 'Selisih terhadap count_readings = ukuran kepercayaan bucket']
+  computed_at timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (device_id, sensor_type_id, channel, bucket_width, bucket_start) [pk, note: 'Mengikuti pola akses chart: satu device, satu sensor, satu resolusi, lalu rentang waktu']
+    (bucket_width, bucket_start) [note: 'Dashboard overview: bucket terbaru lintas seluruh device']
+  }
+
+  Note: 'Hasil downsampling. Diisi ulang secara inkremental oleh worker untuk setiap bucket yang tersentuh data baru, sehingga data terlambat otomatis memperbaiki agregat yang sudah terlanjur dihitung.'
+}

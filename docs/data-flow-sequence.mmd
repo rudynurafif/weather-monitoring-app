@@ -1,0 +1,51 @@
+%% ===========================================================================
+%% Sequence diagram: device offline 3 jam, lalu mengirim 180 record buffered,
+%% dengan payload terakhir terkirim dua kali karena ACK tidak diterima.
+%%
+%% Ini skenario yang menggabungkan tiga kasus sekaligus dari soal:
+%% data terlambat, data tidak berurutan, dan duplikat.
+%% ===========================================================================
+
+sequenceDiagram
+    autonumber
+    participant D as Device WS-GRT-001
+    participant A as API ingestion
+    participant DB as TimescaleDB
+    participant W as Worker agregasi
+    participant F as Dashboard
+
+    Note over D: Jaringan putus pukul 01:00 UTC<br/>pembacaan ditumpuk di buffer lokal
+
+    loop setiap 60 detik selama 3 jam
+        D-->>D: simpan ke buffer, seq bertambah
+    end
+
+    Note over D: Jaringan pulih pukul 04:00 UTC
+
+    D->>A: POST /ingest/telemetry/batch (180 record)
+    A->>A: autentikasi X-Device-Key, cek rate limit
+    A->>A: validasi bentuk dan rentang tiap record
+    A->>A: urutkan menurut ts, resolusi sensor, kalibrasi, quality flag
+    A->>A: hitung delta rain_counter secara berurutan
+    A->>DB: satu bulk INSERT 180 row, ON CONFLICT DO NOTHING
+    DB-->>A: 180 row masuk
+    A->>DB: tandai bucket jam 01, 02, 03, 04 sebagai kotor
+    A-->>D: 200 { accepted: 180, duplicated: 0, rejected: 0 }
+
+    Note over D,A: ACK tidak sampai ke device karena koneksi terputus lagi
+
+    D->>A: POST /ingest/telemetry/batch (180 record yang SAMA)
+    A->>DB: bulk INSERT, ON CONFLICT DO NOTHING
+    DB-->>A: 0 row masuk, 180 bentrok
+    A-->>D: 200 { accepted: 0, duplicated: 180, rejected: 0 }
+    Note over A: Duplikat bukan error. Device berhenti mengirim ulang<br/>karena akhirnya menerima 2xx.
+
+    W->>DB: baca antrean bucket kotor
+    W->>DB: hitung ulang reading_aggregate jam 01 sampai 04
+    Note over W: Agregat jam yang tadi kosong kini terisi;<br/>yang sudah terlanjur dihitung ditimpa nilai baru
+
+    F->>A: GET /readings?device_id=...&from=...&to=...&interval=1h
+    A->>DB: baca reading_aggregate
+    DB-->>A: deret bucket per jam
+    A-->>F: JSON format kolom, timestamp UTC
+    F->>F: konversi ke WIB, render chart
