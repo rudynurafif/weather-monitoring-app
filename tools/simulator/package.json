@@ -1,0 +1,11 @@
+{
+  "name": "@weather/simulator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Simulator device stasiun cuaca: skenario normal, offline-batch, dan duplikat",
+  "type": "commonjs",
+  "main": "simulator.js",
+  "scripts": {
+    "start": "node simulator.js"
+  }
+}
