@@ -186,3 +186,290 @@ Jawaban lengkap keenam pertanyaannya ada di **[`docs/DATA-FLOW.md`](docs/DATA-FL
 | 4 | `device_time` vs `server_time` | `device_time` menjadi sumbu time-series karena yang dicari pengguna adalah kapan cuacanya begitu. `server_time` disimpan untuk mengukur keterlambatan dan drift. Drift ditandai, **tidak dikoreksi diam-diam**. |
 | 5 | Timezone | UTC di device, database, backend, dan response API. Konversi ke WIB **hanya di frontend saat render**. Satu pengecualian: agregat kalender harian memakai batas tengah malam WIB. |
 | 6 | Kegagalan database | Jawab `503` + `Retry-After`, **jangan pernah** jawab `2xx` sebelum data tersimpan. Buffer device-lah yang menjadi durabilitas sistem ini; batasnya dan rencana perbaikannya ditulis terbuka. |
+
+---
+
+## Bagian E — API
+
+### E — Bagaimana mencegah response `GET /api/v1/readings` membengkak ketika user meminta rentang 1 tahun?
+
+Tiga lapis pertahanan, dan ketiganya ada di **server**. Kebijakannya terkumpul di [`interval-policy.ts`](apps/api/src/readings/interval-policy.ts) sebagai fungsi murni supaya bisa diuji tanpa database.
+
+**1. Resolusi minimum menurut lebar rentang — ini yang paling menentukan.**
+
+| Rentang diminta | Resolusi paling halus yang diizinkan | Jumlah titik |
+|---|---|---|
+| ≤ 26 jam | `raw` | ~1.440 |
+| ≤ 3 hari | `1m` | ~4.320 |
+| ≤ 100 hari | `1h` | ~2.400 |
+| > 100 hari | `1d` | ~365 |
+
+Permintaan satu tahun **tidak akan pernah** dilayani dari data mentah, berapa pun nilai `interval` yang dikirim klien. Angka-angka itu diturunkan dari batas 5.000 titik dengan asumsi satu pembacaan per menit.
+
+**2. Batas keras jumlah titik.** `LIMIT 5000` pada setiap query, dan `meta.truncated` memberi tahu klien bila batas itu tersentuh.
+
+**3. Batas lebar rentang.** Permintaan melebihi 400 hari ditolak `422 INVALID_TIME_RANGE` dengan pesan agar dipecah menjadi beberapa bagian.
+
+**Menaikkan, bukan menolak.** Kalau klien meminta resolusi yang lebih halus daripada yang diizinkan, server menaikkannya dan **melaporkan penyesuaiannya** di `meta.interval_applied`, `meta.interval_requested`, dan `meta.interval_coarsened`. Alasannya praktis: chart yang mengubah rentang dari 24 jam ke satu tahun seharusnya tetap menggambar sesuatu, bukan menampilkan error yang memaksa penggunanya menebak parameter yang benar. Yang tidak boleh adalah melakukannya diam-diam — karena itu penyesuaiannya ikut ditampilkan di layar, bukan hanya di response.
+
+Efeknya terukur: permintaan `interval=raw` untuk rentang 7 hari menghasilkan **164 titik dari `reading_aggregate`**, bukan ~12.000 baris dari `sensor_reading`.
+
+### E — Autentikasi device vs autentikasi user dashboard: mekanisme yang sama?
+
+**Berbeda, dan sengaja.** Keduanya menjawab pertanyaan yang berbeda.
+
+| | Device | User dashboard |
+|---|---|---|
+| Mekanisme | API key: `X-Device-Key: <key_id>.<secret>` | JWT bearer token dari `POST /auth/login` |
+| Umur kredensial | Bertahun-tahun, sampai dirotasi | Jam-jaman, lalu login ulang |
+| Cara hash | SHA-256 + pepper | scrypt (KDF lambat) |
+| Yang dibuktikan | "Perangkat ini yang mengirim" | "Orang ini yang sedang memakai" |
+| Pencabutan | Status `REVOKED` di database | Cukup tunggu token kedaluwarsa |
+| Kunci rate limit | `device_id` | user + IP |
+
+Tiga alasan yang membuat penyamaan keduanya justru salah:
+
+**Pertama, soal siapa yang memegang.** Kredensial device tertanam di perangkat keras di puncak tiang, tanpa manusia yang mengawasi dan tanpa layar untuk login ulang. Ia harus berumur panjang. Sesi manusia justru sebaliknya: makin pendek makin aman, karena laptop bisa tertinggal dalam keadaan terbuka.
+
+**Kedua, soal biaya verifikasi.** Password manusia entropinya rendah, jadi hashing-nya sengaja dibuat lambat agar mahal ditebak berulang kali. Secret device dibangkitkan acak 256 bit — tidak ada kamus yang bisa menebaknya, sehingga KDF lambat tidak menambah keamanan sama sekali. Yang ditambahkannya justru masalah: verifikasi lambat dijalankan pada **setiap payload masuk**, menjadikan endpoint ingestion sasaran empuk untuk kehabisan CPU.
+
+**Ketiga, soal apa yang boleh dilakukan.** Device hanya boleh menulis telemetri atas nama dirinya sendiri — itu pun diperiksa ulang dengan mencocokkan `device_id` di payload terhadap pemilik kredensialnya. Device tidak punya izin membaca apa pun. User dashboard sebaliknya: boleh membaca seluruh data, dan yang boleh mengubah hanya peran ADMIN/OPERATOR.
+
+> **Catatan jujur tentang yang terpasang sekarang:** lapisan autentikasi user belum saya selesaikan. Tabel `user` beserta hash scrypt-nya sudah ada dan seeder membuat akun admin, tetapi endpoint pembacaan saat ini masih terbuka tanpa token supaya reviewer bisa langsung membuka dashboard. Ini kesengajaan untuk mempermudah penilaian, **bukan desain untuk produksi**, dan ikut tercatat di daftar "belum selesai" di README.
+
+### E — Rancang rate limiting untuk endpoint ingestion
+
+**Kuncinya `device_id`, bukan IP.** Implementasinya di [`device-rate-limit.guard.ts`](apps/api/src/ingestion/device-rate-limit.guard.ts).
+
+Kenapa bukan IP: stasiun cuaca di lapangan lazimnya berada di belakang NAT operator seluler, sehingga puluhan device bisa berbagi satu alamat IP publik. Membatasi per IP berarti satu device yang cerewet menjatuhkan kuota seluruh device di operator yang sama — sementara penyerang cukup berganti IP untuk lolos. Kuncinya harus identitas yang sudah terbukti, dan itu baru diketahui **setelah** autentikasi. Karena itu urutan guard-nya selalu: autentikasi dulu, rate limit sesudahnya.
+
+**Kuotanya** 120 request per menit per device (`INGEST_RATE_LIMIT_PER_MINUTE`), memakai sliding window. Device normal mengirim 1 per menit; batas ini memberi ruang 120 kali lipat untuk pengiriman ulang dan data buffered, sambil tetap menahan device yang firmware-nya rusak dan mengirim tanpa henti.
+
+**Response-nya:**
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 43
+X-RateLimit-Limit: 120
+X-RateLimit-Remaining: 0
+```
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "RATE_LIMIT_EXCEEDED",
+    "message": "Device WS-GRT-001 melampaui 120 request per menit; coba lagi dalam 43 detik"
+  },
+  "meta": { "request_id": "...", "timestamp": "..." }
+}
+```
+
+Header `Retry-After` bukan hiasan: tanpanya, device yang kena limit lazimnya langsung mencoba lagi dan justru memperburuk keadaan.
+
+**Batas yang saya sadari:** hitungannya disimpan di memori proses, jadi kuotanya berlaku per instance API. Kalau kelak dijalankan lebih dari satu instance, hitungannya harus pindah ke penyimpanan bersama — Redis dengan `INCR` + `EXPIRE`. Untuk 50 device dengan satu instance, kompleksitas itu belum terbayar.
+
+### E — Pagination: kenapa offset untuk device, rentang waktu untuk time-series?
+
+Keduanya dipakai, masing-masing di tempat yang cocok.
+
+**Device memakai offset** (`?page=2&per_page=20`). Jumlah device kecil dan stabil, pengguna butuh melihat total dan melompat ke halaman tertentu, dan kelemahan offset — biaya `OFFSET n` yang tumbuh karena database tetap harus melewati n baris, serta baris yang bergeser saat data berubah di tengah penelusuran — tidak terasa pada puluhan baris.
+
+**Time-series memakai batas waktu, yang pada dasarnya cursor.** Klien mengirim `from`/`to`, bukan nomor halaman. Pada tabel 184 juta row, `OFFSET 1000000` memaksa PostgreSQL memindai dan membuang sejuta baris sebelum mengembalikan apa pun. Rentang waktu langsung memanfaatkan urutan index dan *chunk exclusion* hypertable, sehingga biayanya sebanding dengan data yang benar-benar dikembalikan — bukan dengan posisinya di dalam tabel. Data baru yang masuk di tengah penelusuran juga tidak menggeser halaman yang sudah dilewati.
+
+---
+
+## Bagian G — Frontend
+
+### G — Berapa titik data yang wajar dirender dalam satu chart? Bagaimana kalau user memilih rentang 1 tahun?
+
+**Angka praktisnya 500–2.000 titik**, dengan batas keras 5.000 di sisi server.
+
+Alasannya bukan soal kemampuan pustaka chart, melainkan soal layar: chart selebar 1.200 piksel tidak bisa menampilkan lebih dari 1.200 titik tanpa menumpuknya di piksel yang sama. Merender 10.000 titik menghabiskan waktu dan memori untuk menggambar sesuatu yang secara fisik tidak mungkin terlihat. Di atas ~3.000 titik, interaksi hover dan zoom mulai tersendat di perangkat kelas menengah — dan dashboard ini akan dibuka juga dari ponsel.
+
+**Untuk rentang 1 tahun, penanganannya ada di server, bukan di browser:**
+
+1. Chart meminta interval yang sesuai dengan rentangnya (`1d` untuk rentang panjang). Ini keputusan frontend yang sadar — soal melarang menarik data mentah lalu mengagregasinya di browser.
+2. Server tetap memaksakan kebijakannya sendiri: permintaan resolusi yang terlalu halus dinaikkan otomatis. Jadi frontend yang salah pun tidak bisa menjatuhkan API.
+3. Satu tahun pada resolusi harian = **365 titik**. Nyaman dirender, dan secara ilmiah memang itu resolusi yang bermakna untuk rentang setahun — fluktuasi per menit tidak punya arti pada skala itu.
+
+Halaman detail juga menampilkan resolusi yang benar-benar dipakai beserta jumlah titiknya, sehingga pengguna tahu persis apa yang sedang dilihatnya.
+
+### G — Bagaimana menampilkan gap data ketika device offline 3 jam? Garis putus, nol, atau interpolasi?
+
+**Garis putus.** Implementasinya di [`insertGaps()`](apps/web/src/components/charts.tsx).
+
+| Pilihan | Kenapa tidak |
+|---|---|
+| **Nol** | Terbaca sebagai "suhunya memang 0 °C" atau "kelembapannya 0%". Itu bukan ketiadaan data, melainkan data yang salah — dan pada chart keduanya tidak bisa dibedakan oleh mata. Akibatnya rata-rata visual ikut tertarik ke bawah. |
+| **Interpolasi** | Mengarang nilai yang tidak pernah diukur. Untuk data cuaca ini berbahaya: garis mulus melintasi masa mati perangkat akan **menyembunyikan fakta bahwa stasiunnya sempat berhenti bekerja** — justru informasi yang paling perlu diketahui operator. Gap tiga jam adalah peristiwa, bukan gangguan tampilan yang perlu dirapikan. |
+| **Garis putus** | Menunjukkan apa adanya: ada data, lalu tidak ada, lalu ada lagi. Pengguna melihat lubangnya dan tahu harus memeriksa perangkatnya. |
+
+**Cara teknisnya.** API hanya mengirim titik yang benar-benar ada, jadi dari sudut pandang pustaka chart lubang itu tidak terlihat dan garisnya akan tersambung begitu saja — persis seperti interpolasi yang ingin dihindari. Karena itu frontend memeriksa jarak antar titik berurutan; bila jaraknya melebihi 1,8× jarak normal, satu titik bernilai `null` disisipkan di sana, dan `connectNulls={false}` yang memutus garisnya.
+
+Ambang 1,8× dipilih supaya keterlambatan biasa tidak salah dikira gap, sementara satu pengiriman yang benar-benar hilang tetap tertangkap.
+
+**Bar chart hujan diperlakukan berbeda, dan itu disengaja.** Di sana batang bernilai nol berarti "tidak turun hujan" dan batang yang absen berarti "tidak ada data" — dua hal berbeda yang memang perlu terlihat berbeda. Karena itu penyisipan gap tidak diterapkan pada chart hujan.
+
+---
+
+## Soal Esai
+
+### 1. Kenapa data time-series sebaiknya tidak di-`UPDATE`, dan lebih baik append-only?
+
+Karena pembacaan sensor adalah **catatan peristiwa**, bukan keadaan terkini sesuatu. Suhu pukul 10:00 tidak pernah "berubah"; yang ada hanyalah pembacaan baru pada pukul 10:01. Meng-`UPDATE` berarti menyatakan bahwa masa lalu itu keliru, dan sesudahnya tidak ada cara mengetahui nilai aslinya.
+
+Secara teknis, PostgreSQL menerapkan `UPDATE` sebagai hapus-lalu-sisipkan: baris lama menjadi *dead tuple* yang membengkakkan tabel sampai VACUUM membereskannya, dan setiap index yang memuat kolom itu ikut ditulis ulang. Pada tabel 184 juta row yang menerima 350 insert per menit, VACUUM tidak akan pernah mengejar. Pola append-only juga yang membuat kompresi kolom TimescaleDB mungkin — chunk terkompresi sangat mahal untuk diubah per baris, dan tanpa append-only penghematan 10–20× itu hilang.
+
+Yang paling penting: append-only membuat idempotensi mudah. Dengan `ON CONFLICT DO NOTHING`, payload yang dikirim ulang cukup diabaikan. Kalau data boleh diubah, pengiriman ulang harus memutuskan versi mana yang menang — dan pertanyaan itu tidak punya jawaban yang benar.
+
+Koreksi tetap mungkin tanpa `UPDATE`: nilai mentah tidak pernah disentuh, kalibrasi disimpan sebagai interval berlaku, dan hasil koreksinya ditulis ke kolom terpisah yang bisa dihitung ulang kapan saja.
+
+### 2. Apa itu hypertable dan continuous aggregate di TimescaleDB? Kalau hanya PostgreSQL biasa, bagaimana mencapai efek yang sama?
+
+**Hypertable** adalah tabel yang tampak biasa tetapi diam-diam dipartisi otomatis menurut waktu menjadi *chunk*. Di sistem ini satu chunk = 7 hari. Manfaat utamanya *chunk exclusion*: query "24 jam terakhir" hanya menyentuh 1 chunk dari 52, sehingga index yang dipindai selalu kecil tidak peduli seberapa besar tabelnya. Bonusnya, retensi menjadi `DROP` tabel fisik — bukan `DELETE` 184 juta row yang bisa berjam-jam dan meninggalkan dead tuple.
+
+**Continuous aggregate** adalah materialized view yang menyegarkan diri secara **inkremental**: hanya bagian yang datanya berubah yang dihitung ulang, bukan seluruh view. Persis untuk melayani `interval=1h` tanpa menyentuh data mentah.
+
+**Padanannya di PostgreSQL polos:**
+
+| Fitur Timescale | Padanan |
+|---|---|
+| Hypertable | `PARTITION BY RANGE (device_time)` bawaan PostgreSQL, ditambah `pg_partman` atau cron untuk membuat partisi baru — partisi native tidak dibuat otomatis |
+| `time_bucket()` | `date_trunc()`, atau aritmetika epoch untuk bucket yang bukan kelipatan satuan waktu standar |
+| Continuous aggregate | Tabel agregat ditambah worker yang meng-`UPSERT`-nya |
+| Compression policy | Tidak ada padanan langsung; paling dekat `pg_squeeze` atau memindahkan data lama ke tablespace terkompresi |
+| Retention policy | Cron yang menjalankan `DROP TABLE` pada partisi lama |
+
+**Yang saya lakukan di proyek ini adalah campuran yang disengaja.** Hypertable, kompresi, dan retensi memakai TimescaleDB. Tetapi untuk agregat saya **tidak** memakai continuous aggregate, melainkan tabel `reading_aggregate` yang diisi worker sendiri. Alasannya: data terlambat. Dengan tabel sendiri, saya menandai bucket yang tersentuh dan menghitungnya ulang dari nol — perilakunya eksplisit, idempoten, dan bisa saya uji. Dengan continuous aggregate, penanganan data terlambat bergantung pada `refresh_lag` yang harus disetel dengan benar, dan salah setel berarti agregat diam-diam kehilangan data buffered. Saya memilih yang bisa saya pertanggungjawabkan sepenuhnya.
+
+### 3. Perbedaan menghitung rata-rata arah angin dengan rata-rata suhu
+
+Suhu adalah besaran **linier**: 20 °C dan 30 °C rata-ratanya 25 °C, dan angka itu punya arti.
+
+Arah angin adalah besaran **melingkar**: 0° dan 360° menunjuk arah yang sama persis. Rata-rata aritmetika 350° dan 10° menghasilkan 180° — arah yang **berlawanan** dengan kenyataan, padahal kedua pengamatan itu hanya berjarak 20° dan sama-sama menunjuk ke utara.
+
+**Cara yang benar: rata-rata vektor.** Setiap arah diubah menjadi vektor satuan, dijumlahkan, lalu sudutnya diambil kembali:
+
+```
+x = Σ cos(θᵢ)
+y = Σ sin(θᵢ)
+θ̄ = atan2(y, x)   → dinormalkan ke 0–360°
+```
+
+Untuk 350° dan 10°: x = cos 350° + cos 10° = 0,985 + 0,985 = 1,970 dan y = sin 350° + sin 10° = −0,174 + 0,174 = 0. Maka atan2(0; 1,970) = 0° — **utara**, yang memang benar.
+
+Di sistem ini, `reading_aggregate` menyimpan `sum_sin` dan `sum_cos`, bukan rata-rata arahnya. Yang disimpan jumlah, bukan rata-rata, supaya beberapa bucket jam bisa digabungkan menjadi satu bucket harian tanpa kehilangan ketepatan — menjumlahkan rata-rata arah sama salahnya dengan merata-ratakan derajat sejak awal. Pemilihan rumusnya tidak di-hardcode per nama sensor, melainkan dikendalikan flag `is_circular` di master data tipe sensor.
+
+Satu hal yang perlu disadari: panjang vektor hasilnya (`√(x²+y²) / n`) adalah ukuran **konsistensi** arah angin. Nilai mendekati 1 berarti angin konsisten dari satu arah; mendekati 0 berarti arahnya berputar-putar sehingga "arah rata-rata" praktis tidak bermakna. Secara ilmiah, idealnya rata-rata arah juga dibobot kecepatan — angin 20 m/s dari barat lebih menentukan daripada 0,5 m/s dari timur. Itu belum saya terapkan dan saya catat sebagai keterbatasan.
+
+### 4. Insert satu per satu vs bulk insert/batching pada 50 device × 7 sensor tiap menit
+
+Bebannya 350 baris per menit, sekitar 6 baris per detik. Angka itu kecil, tetapi cara penulisannya menentukan apakah sistem sanggup menghadapi lonjakan.
+
+**Perkiraan bedanya: 20–100 kali lipat**, dan sumbernya bukan kecepatan database menulis baris.
+
+| Biaya | Insert satu per satu (350×) | Bulk insert (1×) |
+|---|---|---|
+| Perjalanan jaringan | 350 kali, masing-masing ~0,5–2 ms | 1 kali |
+| Parse + plan query | 350 kali | 1 kali |
+| Transaksi (BEGIN/COMMIT) | 350 kali, masing-masing menunggu `fsync` WAL | 1 kali |
+| Penulisan WAL | 350 catatan terpisah | 1 catatan besar |
+
+Yang paling mahal adalah **`fsync` per transaksi**: menunggu disk benar-benar menulis, biasanya 0,5–5 ms, dan itu waktu tunggu murni yang tidak bisa dipercepat CPU. 350 insert terpisah ≈ 350 × (RTT + fsync) ≈ 350 × 2 ms ≈ **700 ms**. Satu bulk insert 350 baris ≈ **5–15 ms**. Sekitar 50–100 kali lebih cepat, dan bedanya melebar seiring naiknya latensi jaringan ke database.
+
+Bedanya paling terasa justru di saat paling genting. Ketika listrik pulih dan 50 device serentak mengirim batch berisi 180 record, itu ~63.000 baris. Satu per satu: sekitar dua menit, dengan seluruh connection pool terkunci. Secara bulk: beberapa detik.
+
+Di sistem ini, satu request batch selalu menjadi **satu** `INSERT` multi-VALUES lewat `createMany`, apa pun jumlah record-nya. `COPY` bisa lebih cepat lagi untuk puluhan ribu baris sekaligus, tetapi tidak mendukung `ON CONFLICT DO NOTHING` — dan idempotensi lebih berharga daripada sisa kecepatan itu pada skala ini.
+
+### 5. Index apa yang dibuat di `sensor_reading`, dan kenapa urutan kolomnya penting?
+
+Index utamanya adalah primary key:
+
+```sql
+PRIMARY KEY (device_id, sensor_type_id, channel, device_time)
+```
+
+**Kenapa urutan itu.** B-tree menyimpan baris terurut menurut kolom pertama, lalu kolom kedua di dalam tiap nilai kolom pertama, dan seterusnya — seperti buku telepon yang diurutkan nama belakang lalu nama depan. Akibatnya: **kolom yang dipakai dengan `=` harus di depan, kolom yang dipakai dengan rentang harus paling belakang.**
+
+Query chart utamanya berbentuk:
+
+```sql
+WHERE device_id = $1 AND sensor_type_id = $2 AND channel = $3
+  AND device_time BETWEEN $4 AND $5
+```
+
+Dengan urutan di atas, PostgreSQL melompat langsung ke titik awal rentang dan membaca berurutan sampai batas akhir — satu penelusuran menurun ditambah pemindaian rentang yang panjangnya persis sebesar data yang diminta.
+
+**Kalau `device_time` ditaruh di depan** — `(device_time, device_id, sensor_type_id)` — index tetap "terpakai", tetapi caranya jauh lebih mahal: semua baris dari **semua device** dalam rentang itu dibaca lebih dulu, baru disaring. Pada 50 device, itu 50 kali lebih banyak pekerjaan untuk hasil yang sama. Begitu kolom rentang dilewati, kolom sesudahnya tidak bisa lagi dipakai mempersempit pencarian — hanya untuk menyaring baris yang sudah terlanjur dibaca.
+
+Index yang benar-benar ada di tabel ini:
+
+| Index | Melayani |
+|---|---|
+| PK `(device_id, sensor_type_id, channel, device_time)` | Query chart, sekaligus kunci idempotensi |
+| `(device_id, device_time DESC)` | "Semua sensor satu device dalam rentang" — `sensor_type_id` tidak difilter, jadi PK tidak efisien di sini |
+| `(device_time DESC)` | Dibuat otomatis `create_hypertable`; chunk exclusion dan query lintas device |
+| `(device_id, sensor_type_id, channel, device_time DESC) INCLUDE (value, raw_value, quality_flags)` | `/readings/latest` sebagai index-only scan |
+| `(device_id, device_time DESC) WHERE quality_flags <> 0` | Halaman diagnosa; parsial agar tetap kecil |
+
+Perkiraan biayanya jujur: keempat index tambahan itu memakan sekitar 30 GB per tahun, hampir sebesar datanya sendiri (~28 GB). Yang paling mahal adalah index `latest` (~11 GB/tahun) dan kolom kuncinya sama persis dengan PK — kalau ruang disk menjadi masalah lebih dulu daripada latensi, itulah yang pertama saya buang.
+
+### 6. Bagaimana mendeteksi sensor yang "macet" — mengirim data terus tapi nilainya identik selama 6 jam?
+
+Sensor macet berbahaya justru karena terlihat sehat: heartbeat normal, data masuk tepat waktu, nilainya di dalam rentang wajar. Satu-satunya yang salah adalah angkanya tidak pernah berubah.
+
+**Cara mendeteksinya: periksa keragaman nilai dalam jendela waktu**, dan `reading_aggregate` sudah menyimpan bahan yang diperlukan:
+
+```sql
+SELECT device_id, sensor_type_id, channel
+FROM reading_aggregate
+WHERE bucket_width = 'HOUR_1'
+  AND bucket_start >= now() - INTERVAL '6 hours'
+GROUP BY device_id, sensor_type_id, channel
+HAVING max(max_value) - min(min_value) < 0.001
+   AND sum(count_good) > 30;
+```
+
+Karena `min_value` dan `max_value` sudah terhitung per jam, pemeriksaan enam jam hanya menyentuh 6 baris per sensor — bukan 360 baris data mentah.
+
+Dua hal yang membuat deteksi ini tidak menghasilkan alarm palsu:
+
+**Ambangnya tidak boleh nol mutlak**, melainkan lebih kecil daripada resolusi sensor. Sensor suhu berpresisi 0,1 °C yang benar-benar berfungsi tetap akan menunjukkan sedikit riak.
+
+**Ambangnya harus per tipe sensor.** Ini yang paling mudah keliru: beberapa besaran memang wajar diam. `solar_rad` bernilai 0 sepanjang malam selama 11 jam berturut-turut adalah benar, bukan macet. `rain_counter` yang tidak bergerak selama seminggu di musim kemarau juga benar. Kelembapan dan tekanan yang benar-benar beku selama enam jam hampir pasti sensor rusak. Karena itu aturannya diberi pengecualian: hanya berlaku pada `solar_rad` di siang hari, dan tidak berlaku sama sekali pada sensor kumulatif.
+
+Hasilnya ditandai sebagai `STUCK_SENSOR` — nilainya sudah disediakan di bitmask quality flag. Yang belum saya kerjakan adalah job periodik yang menjalankan query ini dan menuliskan flag-nya; yang ada sekarang baru tempatnya, bukan pelaksananya.
+
+### 7. Menambah alert "curah hujan > 20 mm/jam": di lapisan mana logika ini ditaruh?
+
+**Di worker agregasi, tepat setelah sebuah bucket jam selesai dihitung ulang** — bukan di jalur ingestion, bukan di database, bukan di frontend.
+
+Alasannya berangkat dari bunyi aturannya sendiri: "20 mm **per jam**". Yang diperiksa adalah besaran per jam, dan satu-satunya tempat besaran itu ada adalah bucket `HOUR_1`. Memeriksanya di tempat lain berarti menghitung ulang hal yang sudah dihitung.
+
+**Kenapa bukan di ingestion.** Satu payload hanya membawa hujan satu interval — biasanya 0,2 sampai 1 mm. Untuk tahu totalnya sudah melewati 20 mm, ingestion harus menjumlahkan 60 pembacaan terakhir pada **setiap payload yang masuk**. Itu menambah query berat ke jalur terpanas di sistem, demi pemeriksaan yang hasilnya baru berubah sekali sejam.
+
+**Kenapa bukan trigger database.** Trigger berjalan di dalam transaksi insert, sehingga kegagalan pengiriman notifikasi bisa menggagalkan penyimpanan data. Menukar data yang hilang dengan notifikasi yang terkirim adalah pertukaran yang salah arah. Logika bisnis di dalam trigger juga sulit diuji dan tidak terlihat oleh siapa pun yang membaca kode aplikasi.
+
+**Kenapa bukan di frontend.** Alert harus bekerja ketika tidak ada orang yang membuka dashboard — dan justru saat itulah ia paling dibutuhkan.
+
+**Kenapa worker agregasi cocok:** ia sudah tahu persis bucket mana yang nilainya baru berubah; ia berjalan di luar jalur request sehingga keterlambatan notifikasi tidak memperlambat ingestion; dan karena bucket dihitung ulang dari nol, ambangnya dinilai terhadap angka final — data terlambat yang masuk belakangan ikut memicu alert dengan benar.
+
+Satu hal yang harus ada agar tidak menjadi mimpi buruk: **peredam pengulangan**. Bucket yang sama dihitung ulang setiap kali ada data terlambat, jadi alert harus mencatat "bucket ini sudah pernah memicu" dan tidak mengirim ulang untuk bucket yang sama.
+
+### 8. Risiko keamanan pada endpoint ingestion yang terbuka ke internet, dan mitigasinya
+
+| Risiko | Mitigasi yang ada | Yang belum |
+|---|---|---|
+| **Data palsu** — siapa pun mengirim pembacaan karangan | Setiap request wajib membawa `X-Device-Key` yang diverifikasi terhadap hash. `device_id` di payload dicocokkan dengan pemilik kredensial, jadi kredensial yang bocor pun tidak bisa menulis atas nama stasiun lain | — |
+| **Kredensial bocor** dari perangkat yang dibongkar | Kredensial per device, bukan satu kunci bersama, sehingga satu perangkat yang dibongkar tidak membuka semuanya. Rotasi lewat endpoint tersendiri dengan masa tenggang 7 hari | Deteksi anomali: satu `key_id` yang tiba-tiba mengirim dari banyak IP berbeda |
+| **Serangan volume** — membanjiri ingestion | Rate limit 120/menit per device, batas batch 500 record, batas ukuran body | Rate limit lapisan jaringan (WAF/Cloudflare) untuk request yang bahkan belum lolos autentikasi |
+| **Kehabisan sumber daya** lewat payload raksasa | Batas batch dan ukuran body; verifikasi kredensial memakai SHA-256 yang murah sehingga tidak bisa dipakai menghabiskan CPU | — |
+| **Penyadapan & replay** | HTTPS mencegah penyadapan. Replay tidak berbahaya di sini: primary key membuat payload yang diputar ulang hanya menjadi duplikat yang diabaikan — idempotensi ternyata sekaligus mitigasi keamanan | Nonce/timestamp signing bila replay perlu ditolak, bukan sekadar diabaikan |
+| **Injeksi** | Seluruh query memakai parameter (Prisma dan `Prisma.sql`), tidak ada penggabungan string. Validasi bentuk dan tipe sebelum menyentuh database | — |
+| **Kebocoran informasi lewat pesan error** | Kredensial tidak ditemukan dan secret salah dijawab dengan pesan yang sama persis, agar endpoint ini tidak bisa dipakai memetakan `key_id` yang valid. Detail error internal tidak pernah keluar; yang keluar hanya kode dan `request_id` | — |
+| **Pencemaran data** — device rusak mengirim nilai gila | Validasi rentang menandai tanpa membuang; nilai bertanda dikecualikan dari agregat statistik | Karantina otomatis: device yang terus-menerus mengirim data bertanda dipindahkan ke status MAINTENANCE |
+
+**Dua yang paling menentukan** menurut saya: (1) kredensial **per device**, karena satu kunci bersama berarti satu perangkat yang dibongkar membuka seluruh armada dan rotasinya mustahil dilakukan tanpa mematikan semuanya; dan (2) **idempotensi**, karena ia mengubah serangan replay dari ancaman integritas data menjadi sekadar duplikat yang diabaikan diam-diam.
+
+**Satu risiko yang belum tertangani dan perlu saya sebut terus terang:** tidak ada pembatasan siapa yang boleh memanggil endpoint manajemen. Sampai autentikasi user dashboard selesai, siapa pun yang bisa menjangkau API bisa mendaftarkan device dan merotasi kredensial. Untuk deployment sungguhan, itu harus ditutup lebih dulu sebelum apa pun yang lain.
