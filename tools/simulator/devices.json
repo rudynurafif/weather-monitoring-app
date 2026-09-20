@@ -1,0 +1,50 @@
+{
+  "_catatan": [
+    "Kredensial DEVELOPMENT untuk seeder dan simulator. Satu sumber kebenaran:",
+    "seeder membaca berkas ini untuk membuat kredensial di database (yang disimpan",
+    "hanya hash-nya), dan simulator membacanya untuk menyusun header X-Device-Key.",
+    "",
+    "Nilai-nilai ini SENGAJA di-commit karena memang hanya untuk data contoh di",
+    "mesin pengembang dan agar reviewer bisa menjalankan simulator tanpa menyalin",
+    "secret dari mana-mana. Pada deployment sungguhan, kredensial dibuat lewat",
+    "POST /api/v1/devices dan secret-nya hanya pernah muncul sekali di response."
+  ],
+  "devices": [
+    {
+      "device_code": "WS-GRT-001",
+      "name": "Stasiun Cuaca Garut Kota",
+      "key_id": "a1b2c3d4e5f60001",
+      "secret": "wsk_dev_garut_kota_seed_secret_0001",
+      "location": {
+        "name": "Garut Kota",
+        "latitude": -7.214,
+        "longitude": 107.9,
+        "altitude_m": 717
+      }
+    },
+    {
+      "device_code": "WS-BDG-002",
+      "name": "Stasiun Cuaca Lembang",
+      "key_id": "a1b2c3d4e5f60002",
+      "secret": "wsk_dev_lembang_seed_secret_0002",
+      "location": {
+        "name": "Lembang",
+        "latitude": -6.8118,
+        "longitude": 107.6175,
+        "altitude_m": 1312
+      }
+    },
+    {
+      "device_code": "WS-CRB-003",
+      "name": "Stasiun Cuaca Cirebon Pesisir",
+      "key_id": "a1b2c3d4e5f60003",
+      "secret": "wsk_dev_cirebon_seed_secret_0003",
+      "location": {
+        "name": "Cirebon Pesisir",
+        "latitude": -6.7063,
+        "longitude": 108.5571,
+        "altitude_m": 5
+      }
+    }
+  ]
+}
