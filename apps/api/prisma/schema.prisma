@@ -1,0 +1,499 @@
+// ============================================================================
+// Skema database platform monitoring stasiun cuaca
+//
+// Keputusan besar yang melandasi skema ini (detail & alasan ada di docs/ERD.md
+// dan JAWABAN.md):
+//
+//  1. Pembacaan sensor disimpan NARROW/LONG (satu row per sensor per waktu),
+//     bukan WIDE (satu row berisi semua sensor). Alasan: jumlah sensor per
+//     device tidak seragam, sensor error tidak ikut dikirim (array bisa lebih
+//     pendek), dan sensor bisa dipasang/dilepas kapan saja. Format wide akan
+//     memaksa ALTER TABLE setiap ada tipe sensor baru dan menghasilkan banyak
+//     kolom NULL.
+//
+//  2. Nilai mentah dari device TIDAK PERNAH diubah. Kalibrasi disimpan sebagai
+//     interval berlaku (effective_from/to) dan hasilnya ditulis ke kolom
+//     terpisah, sehingga koreksi bisa ditelusuri dan dihitung ulang.
+//
+//  3. Relasi pembacaan -> device bersifat langsung (device_id disalin ke setiap
+//     row), bukan hanya lewat sensor. Dengan begitu, memindahkan sensor ke
+//     device lain tidak pernah mengubah kepemilikan data lama.
+//
+//  4. Semua timestamp bertipe timestamptz dan disimpan dalam UTC.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Master data lokasi & pengguna
+// ---------------------------------------------------------------------------
+
+model Location {
+  id   String @id @default(uuid()) @db.Uuid
+  name String @db.VarChar(120)
+
+  /// Koordinat disimpan sebagai Decimal, bukan Float, agar nilai yang
+  /// ditampilkan kembali persis sama dengan yang dimasukkan operator.
+  latitude    Decimal  @db.Decimal(9, 6)
+  longitude   Decimal  @db.Decimal(9, 6)
+  altitudeM   Decimal  @map("altitude_m") @db.Decimal(7, 2)
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  devices Device[]
+
+  @@unique([name])
+  @@map("location")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+
+  @@map("user_role")
+}
+
+model User {
+  id    String @id @default(uuid()) @db.Uuid
+  email String @unique @db.VarChar(160)
+
+  /// Password di-hash dengan scrypt (lihat AuthService). Plaintext tidak pernah
+  /// disimpan maupun dicatat di log.
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  fullName     String   @map("full_name") @db.VarChar(120)
+  role         UserRole @default(VIEWER)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  statusChanges DeviceStatusHistory[]
+  installations SensorInstallation[]
+  calibrations  SensorCalibration[]
+
+  @@map("user")
+}
+
+// ---------------------------------------------------------------------------
+// Device (stasiun cuaca)
+// ---------------------------------------------------------------------------
+
+enum DeviceStatus {
+  /// Terdaftar di sistem, kredensial sudah dibuat, belum dipasang di lapangan.
+  PROVISIONED
+  /// Beroperasi normal; hanya status ini yang boleh mengirim telemetri.
+  ACTIVE
+  /// Sedang diservis. Data tetap diterima tapi ditandai, agar anomali saat
+  /// teknisi mengutak-atik sensor tidak mencemari statistik.
+  MAINTENANCE
+  /// Pensiun permanen. Ingestion ditolak, data historis tetap disimpan.
+  DECOMMISSIONED
+
+  @@map("device_status")
+}
+
+model Device {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Identitas yang dikirim device di payload ("device_id": "WS-GRT-001").
+  /// Dipisahkan dari primary key supaya PK internal tetap stabil sekalipun
+  /// penamaan di lapangan berubah.
+  deviceCode String @unique @map("device_code") @db.VarChar(64)
+  name       String @db.VarChar(120)
+
+  locationId String?      @map("location_id") @db.Uuid
+  location   Location?    @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  status     DeviceStatus @default(PROVISIONED)
+
+  firmwareVersion String?   @map("firmware_version") @db.VarChar(32)
+  installedAt     DateTime? @map("installed_at") @db.Timestamptz(6)
+
+  /// Tiga kolom berikut adalah denormalisasi yang disengaja: nilainya bisa
+  /// dihitung dari tabel time-series, tapi pertanyaan "device mana yang diam
+  /// lebih dari X menit?" harus dijawab tanpa menyentuh tabel 180 juta row.
+  /// Di-update pada setiap telemetri/heartbeat yang valid.
+  lastSeenAt   DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  lastBatteryV Float?    @map("last_battery_v")
+  lastRssi     Int?      @map("last_rssi")
+
+  /// Soft delete. Baris tidak pernah benar-benar dihapus karena masih menjadi
+  /// induk jutaan row pembacaan historis.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  credentials   DeviceCredential[]
+  statusHistory DeviceStatusHistory[]
+  installations SensorInstallation[]
+  heartbeats    DeviceHeartbeat[]
+
+  /// Melayani list device dengan filter status + lokasi (endpoint GET /devices).
+  @@index([status, locationId])
+  /// Melayani query kesehatan: "device mana yang last_seen_at < now() - X".
+  @@index([lastSeenAt])
+  @@index([deletedAt])
+  @@map("device")
+}
+
+enum CredentialStatus {
+  ACTIVE
+  REVOKED
+
+  @@map("credential_status")
+}
+
+model DeviceCredential {
+  id       String @id @default(uuid()) @db.Uuid
+  deviceId String @map("device_id") @db.Uuid
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  /// Bagian publik dari kredensial, dikirim device pada header X-Device-Key
+  /// sebagai "<key_id>.<secret>". Karena key_id terindeks unik, verifikasi
+  /// hanya perlu satu lookup - tanpa ini kita harus mencoba hash ke semua row.
+  keyId String @unique @map("key_id") @db.VarChar(32)
+
+  /// SHA-256(secret + pepper). Secret asli hanya pernah ada satu kali, yaitu di
+  /// response saat pembuatan/rotasi. Pepper disimpan di environment, bukan di
+  /// database, sehingga dump database saja tidak cukup untuk memalsukan device.
+  secretHash String @map("secret_hash") @db.VarChar(64)
+
+  /// Beberapa karakter awal secret, untuk ditampilkan di UI ("wsk_a1b2...").
+  secretPrefix String @map("secret_prefix") @db.VarChar(12)
+
+  status CredentialStatus @default(ACTIVE)
+
+  /// Saat rotasi, kredensial lama tidak langsung mati melainkan diberi tenggat
+  /// di sini, agar device yang sedang offline tidak terkunci di luar sistem.
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([deviceId, status])
+  @@map("device_credential")
+}
+
+model DeviceStatusHistory {
+  id       BigInt @id @default(autoincrement())
+  deviceId String @map("device_id") @db.Uuid
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  /// NULL hanya pada baris pertama (saat device dibuat).
+  fromStatus DeviceStatus? @map("from_status")
+  toStatus   DeviceStatus  @map("to_status")
+  reason     String?       @db.VarChar(255)
+
+  changedByUserId String?  @map("changed_by_user_id") @db.Uuid
+  changedByUser   User?    @relation(fields: [changedByUserId], references: [id], onDelete: SetNull)
+  changedAt       DateTime @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  /// Riwayat selalu dibaca per device dan terbaru lebih dulu.
+  @@index([deviceId, changedAt(sort: Desc)])
+  @@map("device_status_history")
+}
+
+// ---------------------------------------------------------------------------
+// Sensor
+// ---------------------------------------------------------------------------
+
+model SensorType {
+  id Int @id @default(autoincrement())
+
+  /// Kunci yang dikirim device pada field "s" ("temp_air", "humidity", ...).
+  key         String @unique @db.VarChar(32)
+  displayName String @map("display_name") @db.VarChar(80)
+  unit        String @db.VarChar(16)
+
+  /// Rentang wajar fisik. Nilai di luar rentang ini TIDAK dibuang, hanya
+  /// ditandai lewat quality_flags (ketentuan B.4).
+  minValid Float @map("min_valid")
+  maxValid Float @map("max_valid")
+
+  /// Jumlah angka di belakang koma saat ditampilkan.
+  precision Int @default(2)
+
+  /// Sensor pencacah kumulatif (rain_counter): nilainya hanya naik dan reset ke
+  /// 0 saat device restart. Yang bermakna adalah SELISIH antar pembacaan, bukan
+  /// nilai absolutnya.
+  isCumulative Boolean @default(false) @map("is_cumulative")
+
+  /// Faktor pengali untuk mengubah satu satuan cacahan menjadi satuan fisik.
+  /// Untuk rain_counter: 1 tip = 0.2 mm.
+  unitPerCount Float? @map("unit_per_count")
+
+  /// Besaran melingkar (wind_dir): 359 dan 1 hanya berjarak 2 derajat, sehingga
+  /// rata-rata aritmetika salah. Flag ini yang membuat lapisan agregasi memilih
+  /// rata-rata vektor. Lihat JAWABAN.md no. 3.
+  isCircular Boolean @default(false) @map("is_circular")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sensors       Sensor[]
+  installations SensorInstallation[]
+
+  @@map("sensor_type")
+}
+
+enum SensorStatus {
+  IN_STOCK
+  INSTALLED
+  MAINTENANCE
+  RETIRED
+
+  @@map("sensor_status")
+}
+
+model Sensor {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Nomor seri fisik: inilah identitas yang berpindah antar device.
+  serialNumber String @unique @map("serial_number") @db.VarChar(64)
+
+  sensorTypeId Int        @map("sensor_type_id")
+  sensorType   SensorType @relation(fields: [sensorTypeId], references: [id], onDelete: Restrict)
+
+  manufacturer String?      @db.VarChar(80)
+  model        String?      @db.VarChar(80)
+  status       SensorStatus @default(IN_STOCK)
+
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  installations SensorInstallation[]
+  calibrations  SensorCalibration[]
+
+  @@index([sensorTypeId, status])
+  @@map("sensor")
+}
+
+model SensorInstallation {
+  id       String @id @default(uuid()) @db.Uuid
+  sensorId String @map("sensor_id") @db.Uuid
+  sensor   Sensor @relation(fields: [sensorId], references: [id], onDelete: Restrict)
+  deviceId String @map("device_id") @db.Uuid
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+
+  /// Denormalisasi dari sensor.sensor_type_id. Disalin ke sini karena jalur
+  /// ingestion harus menjawab "sensor mana yang memegang slot temp_air channel 0
+  /// di device ini pada waktu T" untuk SETIAP pembacaan yang masuk - tanpa kolom
+  /// ini setiap lookup memerlukan join tambahan ke tabel sensor. Konsistensinya
+  /// dijaga saat pemasangan (service menyalin dari sensor yang dipasang) dan
+  /// oleh exclusion constraint di migrasi.
+  sensorTypeId Int        @map("sensor_type_id")
+  sensorType   SensorType @relation(fields: [sensorTypeId], references: [id], onDelete: Restrict)
+
+  /// Membedakan dua sensor bertipe sama pada satu device - misalnya suhu dalam
+  /// dan luar ruangan. Payload device boleh mengirim "temp_air:1" untuk menunjuk
+  /// channel 1; tanpa suffix dianggap channel 0.
+  channel Int @default(0) @db.SmallInt
+
+  installedAt DateTime @map("installed_at") @db.Timestamptz(6)
+
+  /// NULL berarti masih terpasang sampai sekarang.
+  removedAt DateTime? @map("removed_at") @db.Timestamptz(6)
+
+  installedByUserId String? @map("installed_by_user_id") @db.Uuid
+  installedByUser   User?   @relation(fields: [installedByUserId], references: [id], onDelete: SetNull)
+  notes             String? @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  /// Jalur ingestion: "sensor mana yang memegang slot (tipe, channel) di device
+  /// ini pada waktu T". Ini lookup terpanas di seluruh sistem - dijalankan untuk
+  /// setiap pembacaan yang masuk.
+  @@index([deviceId, sensorTypeId, channel, installedAt(sort: Desc)])
+  /// Pencarian "sensor apa saja yang terpasang di device ini pada waktu T".
+  @@index([deviceId, installedAt(sort: Desc)])
+  /// Pencarian "sensor ini pernah di device mana saja".
+  @@index([sensorId, installedAt(sort: Desc)])
+  @@map("sensor_installation")
+}
+
+model SensorCalibration {
+  id       String @id @default(uuid()) @db.Uuid
+  sensorId String @map("sensor_id") @db.Uuid
+  sensor   Sensor @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+
+  /// Koreksi diterapkan sebagai: nilai_terkoreksi = nilai_mentah * scale + offset
+  offset Float @default(0)
+  scale  Float @default(1)
+
+  /// Kalibrasi berlaku untuk pembacaan dengan device_time di dalam rentang ini.
+  /// effective_to NULL berarti berlaku sampai ada kalibrasi berikutnya.
+  effectiveFrom DateTime  @map("effective_from") @db.Timestamptz(6)
+  effectiveTo   DateTime? @map("effective_to") @db.Timestamptz(6)
+
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
+  createdByUser   User?   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  notes           String? @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  /// Melayani "kalibrasi mana yang berlaku untuk sensor X pada waktu T".
+  @@index([sensorId, effectiveFrom(sort: Desc)])
+  @@map("sensor_calibration")
+}
+
+// ---------------------------------------------------------------------------
+// Time-series
+// ---------------------------------------------------------------------------
+
+model SensorReading {
+  /// Waktu menurut jam internal device (payload "ts"). INI yang dijadikan
+  /// sumbu waktu time-series dan kolom partisi hypertable, karena inilah waktu
+  /// fenomena cuaca sebenarnya terjadi. Lihat JAWABAN alur data no. 4.
+  deviceTime DateTime @map("device_time") @db.Timestamptz(6)
+
+  /// Waktu payload diterima server. Dipakai untuk mendeteksi clock drift dan
+  /// mengukur keterlambatan data, bukan untuk memplot chart.
+  serverTime DateTime @default(now()) @map("server_time") @db.Timestamptz(6)
+
+  deviceId     String @map("device_id") @db.Uuid
+  sensorTypeId Int    @map("sensor_type_id")
+  channel      Int    @default(0) @db.SmallInt
+
+  /// Sensor fisik yang menghasilkan angka ini, ditentukan dari
+  /// sensor_installation yang aktif pada device_time. Disimpan (bukan dicari
+  /// ulang saat query) agar data lama tetap menunjuk sensor yang benar setelah
+  /// sensor dipindah. NULL bila tidak ada instalasi yang cocok.
+  sensorId       String? @map("sensor_id") @db.Uuid
+  installationId String? @map("installation_id") @db.Uuid
+
+  /// Angka apa adanya dari device. Tidak pernah diubah oleh proses apa pun.
+  rawValue Float @map("raw_value")
+
+  /// Hasil penerapan kalibrasi yang berlaku. NULL bila pembacaan tidak layak
+  /// dipakai (mis. sentinel -999 dari sensor yang error).
+  value Float?
+
+  /// Untuk sensor kumulatif: selisih terhadap pembacaan sebelumnya, sudah
+  /// dikalikan unit_per_count dan sudah menangani counter reset. Untuk
+  /// rain_counter inilah curah hujan dalam mm pada interval tersebut.
+  deltaValue Float? @map("delta_value")
+
+  /// Bitmask quality flag (lihat src/ingestion/quality-flags.ts). Bitmask
+  /// dipilih karena satu pembacaan bisa bermasalah lebih dari satu cara
+  /// sekaligus - misalnya di luar rentang DAN timestamp-nya di masa depan.
+  qualityFlags Int @default(0) @map("quality_flags")
+
+  /// Nomor urut payload dari device. Reset ke 0 setiap device restart, jadi
+  /// hanya dipakai untuk diagnosa, tidak pernah sebagai kunci idempotensi.
+  seq Int?
+
+  /// Kalibrasi yang dipakai, untuk audit dan perhitungan ulang.
+  calibrationId String? @map("calibration_id") @db.Uuid
+
+  /// Primary key ini merangkap kunci idempotensi (ketentuan D.1): pengiriman
+  /// ulang payload yang sama akan bentrok di sini dan di-DO NOTHING.
+  /// Urutan kolomnya disengaja - kolom yang dipakai dengan "=" lebih dulu,
+  /// kolom waktu yang dipakai dengan BETWEEN paling belakang. Lihat JAWABAN
+  /// no. 5. Kolom waktu wajib ikut karena TimescaleDB mensyaratkan setiap
+  /// unique constraint pada hypertable memuat kolom partisi.
+  @@id([deviceId, sensorTypeId, channel, deviceTime])
+  /// Melayani "semua sensor milik satu device dalam rentang waktu" - dipakai
+  /// halaman detail stasiun dan endpoint /readings/latest.
+  @@index([deviceId, deviceTime(sort: Desc)])
+  @@map("sensor_reading")
+}
+
+model DeviceHeartbeat {
+  deviceTime DateTime @map("device_time") @db.Timestamptz(6)
+  serverTime DateTime @default(now()) @map("server_time") @db.Timestamptz(6)
+  deviceId   String   @map("device_id") @db.Uuid
+  device     Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  batteryV        Float?  @map("battery_v")
+  rssi            Int?
+  uptimeS         BigInt? @map("uptime_s")
+  firmwareVersion String? @map("firmware_version") @db.VarChar(32)
+
+  /// HEARTBEAT bila datang dari endpoint heartbeat, TELEMETRY bila metadata
+  /// kesehatan ini menumpang payload telemetri.
+  source String @default("HEARTBEAT") @db.VarChar(16)
+
+  @@id([deviceId, deviceTime])
+  @@index([deviceTime(sort: Desc)])
+  @@map("device_heartbeat")
+}
+
+enum BucketWidth {
+  MINUTE_1
+  HOUR_1
+  DAY_1
+
+  @@map("bucket_width")
+}
+
+model ReadingAggregate {
+  /// Awal bucket, selalu dibulatkan ke bawah dalam UTC.
+  bucketStart DateTime    @map("bucket_start") @db.Timestamptz(6)
+  bucketWidth BucketWidth @map("bucket_width")
+
+  deviceId     String @map("device_id") @db.Uuid
+  sensorTypeId Int    @map("sensor_type_id")
+  channel      Int    @default(0) @db.SmallInt
+
+  avgValue  Float? @map("avg_value")
+  minValue  Float? @map("min_value")
+  maxValue  Float? @map("max_value")
+
+  /// Total delta dalam bucket - inilah curah hujan per jam/hari dalam mm.
+  sumDelta  Float? @map("sum_delta")
+  lastValue Float? @map("last_value")
+
+  /// Komponen vektor untuk besaran melingkar (arah angin). Rata-rata arah yang
+  /// benar dihitung dari atan2(sum_sin, sum_cos), bukan dari rata-rata derajat.
+  /// Disimpan sebagai jumlah, bukan rata-rata, supaya beberapa bucket jam bisa
+  /// digabung menjadi satu bucket harian tanpa kehilangan ketepatan.
+  sumSin Float? @map("sum_sin")
+  sumCos Float? @map("sum_cos")
+
+  /// Jumlah seluruh pembacaan dan yang lolos quality check. Selisihnya adalah
+  /// ukuran seberapa dipercaya bucket ini.
+  countReadings Int @default(0) @map("count_readings")
+  countGood     Int @default(0) @map("count_good")
+
+  computedAt DateTime @default(now()) @map("computed_at") @db.Timestamptz(6)
+
+  /// Urutan kolom mengikuti pola akses chart: satu device, satu tipe sensor,
+  /// satu resolusi, lalu rentang waktu.
+  @@id([deviceId, sensorTypeId, channel, bucketWidth, bucketStart])
+  @@index([bucketWidth, bucketStart(sort: Desc)])
+  @@map("reading_aggregate")
+}
+
+/// Antrean bucket agregat yang perlu dihitung ulang.
+///
+/// Jalur ingestion tidak menghitung agregat sendiri; ia hanya menandai bucket
+/// mana yang tersentuh data baru, lalu worker yang menyusul menghitungnya
+/// ulang dari nol. Inilah mekanisme yang membuat data terlambat otomatis
+/// memperbaiki agregat jam yang sudah terlanjur dihitung (Bagian D.2).
+///
+/// Tabel ini sengaja dibuat kecil dan berumur pendek: baris dihapus segera
+/// setelah bucket-nya selesai dihitung ulang. Primary key-nya membuat
+/// penandaan bersifat idempoten - menandai bucket yang sama seratus kali
+/// tetap menghasilkan satu baris.
+model AggregateDirtyBucket {
+  deviceId     String      @map("device_id") @db.Uuid
+  sensorTypeId Int         @map("sensor_type_id")
+  channel      Int         @default(0) @db.SmallInt
+  bucketWidth  BucketWidth @map("bucket_width")
+  bucketStart  DateTime    @map("bucket_start") @db.Timestamptz(6)
+
+  markedAt DateTime @default(now()) @map("marked_at") @db.Timestamptz(6)
+
+  @@id([deviceId, sensorTypeId, channel, bucketWidth, bucketStart])
+  /// Worker mengambil pekerjaan tertua lebih dulu.
+  @@index([markedAt])
+  @@map("aggregate_dirty_bucket")
+}
