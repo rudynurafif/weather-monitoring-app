@@ -3,8 +3,12 @@ import { ConfigModule } from '@nestjs/config';
 import configuration from './config/configuration';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { HealthController } from './health/health.controller';
+import { AggregationModule } from './aggregation/aggregation.module';
+import { DevicesModule } from './devices/devices.module';
 import { IngestionModule } from './ingestion/ingestion.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { ReadingsModule } from './readings/readings.module';
+import { SensorsModule } from './sensors/sensors.module';
 
 @Module({
   imports: [
@@ -19,6 +23,10 @@ import { PrismaModule } from './prisma/prisma.module';
     }),
     PrismaModule,
     IngestionModule,
+    AggregationModule,
+    ReadingsModule,
+    DevicesModule,
+    SensorsModule,
   ],
   controllers: [HealthController],
 })

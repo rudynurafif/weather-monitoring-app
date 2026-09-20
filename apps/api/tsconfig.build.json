@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "comment": [
+    "Konfigurasi khusus untuk 'nest build'.",
+    "",
+    "prisma/ sengaja dikeluarkan: seeder dijalankan lewat tsx dan tidak perlu",
+    "ikut dikompilasi. Kalau ia ikut, TypeScript menaikkan root output menjadi",
+    "apps/api sehingga hasilnya jatuh di dist/src/main.js, bukan dist/main.js.",
+    "",
+    "Berkas *.spec.ts juga dikeluarkan supaya test tidak ikut masuk image."
+  ],
+  "exclude": ["node_modules", "dist", "prisma", "**/*.spec.ts"]
+}

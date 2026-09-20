@@ -174,6 +174,52 @@ function report(label, deviceCode, result) {
   console.log(`  [${result.status}] ${label.padEnd(22)} ${deviceCode}  ${summary}`);
 }
 
+/**
+ * Menyelaraskan pencacah hujan dengan nilai terakhir yang sudah ada di server.
+ *
+ * Tanpa ini, simulator memulai pencacah dari angka acak yang tidak ada
+ * hubungannya dengan data historis. Backend akan menafsirkan lompatannya
+ * sebagai hujan ratusan milimeter dalam satu interval - perilaku yang
+ * sebenarnya BENAR (begitulah tipping bucket bekerja), tetapi membuat data
+ * peragaan terlihat kacau.
+ *
+ * Perangkat sungguhan tidak punya masalah ini karena pencacahnya memang
+ * berlanjut dari keadaan terakhirnya sendiri.
+ */
+async function syncRainCounters() {
+  try {
+    const response = await fetch(`${BASE_URL}/api/v1/dashboard/overview`);
+    if (!response.ok) {
+      return;
+    }
+
+    const overview = await response.json();
+    const byCode = new Map(overview.data.map((row) => [row.device_code, row.id]));
+
+    for (const device of devices) {
+      const deviceId = byCode.get(device.device_code);
+      if (!deviceId) {
+        continue;
+      }
+
+      const latest = await fetch(`${BASE_URL}/api/v1/devices/${deviceId}/readings/latest`);
+      if (!latest.ok) {
+        continue;
+      }
+
+      const payload = await latest.json();
+      const rain = payload.data.find((row) => row.sensor_type === 'rain_counter');
+
+      if (rain && typeof rain.raw_value === 'number') {
+        state.get(device.device_code).rainCounter = rain.raw_value;
+      }
+    }
+  } catch {
+    // Server belum siap atau endpoint tidak tersedia: simulator tetap jalan
+    // dengan pencacah awalnya sendiri.
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Skenario
 // ---------------------------------------------------------------------------
@@ -321,6 +367,9 @@ async function main() {
   };
 
   const run = scenarios[SCENARIO];
+  if (run) {
+    await syncRainCounters();
+  }
   if (!run) {
     console.error(
       `Skenario "${SCENARIO}" tidak dikenal. Pilihan: ${Object.keys(scenarios).join(', ')}`,

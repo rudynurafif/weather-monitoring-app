@@ -82,7 +82,13 @@ export function buildRecomputeSql(
 
         -- Curah hujan dijumlahkan dari delta, bukan dari nilai pencacah.
         -- delta_value sudah menangani counter reset di jalur ingestion.
-        sum(r.delta_value),
+        --
+        -- Filter quality flag di sini PENTING: delta yang ditandai tidak masuk
+        -- akal (lonjakan pencacah ratusan milimeter dalam satu interval,
+        -- biasanya akibat pencacah rusak atau device diganti tanpa dicatat)
+        -- tidak boleh ikut menggelembungkan total curah hujan. Barisnya tetap
+        -- tersimpan sebagai bukti, hanya tidak ikut dijumlahkan.
+        sum(r.delta_value) FILTER (WHERE (r.quality_flags & ${UNUSABLE_FLAGS}) = 0),
 
         -- Nilai terakhir dalam bucket, untuk chart yang menampilkan kondisi
         -- terkini alih-alih rata-rata.
