@@ -29,7 +29,7 @@ export default function OverviewPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">Ikhtisar Stasiun</h1>
+          <h1 className="text-xl font-semibold text-slate-900">Overview Stasiun</h1>
           <p className="text-sm text-slate-500">
             {data ? `${data.length} stasiun terdaftar` : 'Memuat...'}
             {silentCount > 0 && (

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { apiFetch, ApiError, type DeviceDetail, type DeviceOverview } from '@/lib/api';
-import { connectivityStyle, formatDateTime } from '@/lib/format';
+import { formatDateTime } from '@/lib/format';
 import { useApi } from '@/lib/use-api';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states';
 

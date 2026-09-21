@@ -29,7 +29,11 @@ Satu perintah menjalankan database, migrasi, seeder, backend, dan frontend.
 | Swagger | http://localhost:3001/docs |
 | Health check | http://localhost:3001/healthz |
 
-Seeder berjalan otomatis saat container API start dan mengisi 3 stasiun, 21 sensor, serta **data historis 7 hari (~42.000 pembacaan)** — dashboard langsung berisi tanpa perlu menunggu.
+Seeder berjalan otomatis saat container API start dan mengisi **9 stasiun, 63 sensor, serta data historis 7 hari (~127.000 pembacaan)** — dashboard langsung berisi tanpa perlu menunggu.
+
+Ketinggian kesembilan lokasi sengaja dibuat beragam, dari 3 m di pesisir Indramayu sampai 1.400 m di Puncak Bogor, sehingga data contoh memperlihatkan *lapse rate* yang benar: suhu rata-rata turun dari 26,2 °C di pesisir menjadi 17,1 °C di pegunungan.
+
+Satu stasiun (`WS-IDM-008`) sengaja berstatus `MAINTENANCE` agar filter status di halaman manajemen punya sesuatu untuk disaring, dan tiga stasiun membawa anomali yang mewakili kasus Bagian F.3 — sentinel `-999`, kelembapan 150, counter reset, dan satu stasiun yang offline tiga jam sehingga chart-nya memperlihatkan gap.
 
 ### Menjalankan device simulator
 

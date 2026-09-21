@@ -109,6 +109,13 @@ interface SeedDevice {
   name: string;
   key_id: string;
   secret: string;
+  /**
+   * Status awal device. Sebagian besar ACTIVE; satu stasiun sengaja dibuat
+   * MAINTENANCE agar filter status di halaman manajemen punya sesuatu untuk
+   * disaring, dan agar terlihat bahwa device yang sedang diservis tetap
+   * menerima data - hanya saja pembacaannya ditandai.
+   */
+  status?: 'PROVISIONED' | 'ACTIVE' | 'MAINTENANCE' | 'DECOMMISSIONED';
   location: { name: string; latitude: number; longitude: number; altitude_m: number };
 }
 
@@ -368,11 +375,15 @@ async function main(): Promise<void> {
         deviceCode: seedDevice.device_code,
         name: seedDevice.name,
         locationId: location.id,
-        status: DeviceStatus.ACTIVE,
+        status: (seedDevice.status ?? 'ACTIVE') as DeviceStatus,
         firmwareVersion: '1.4.2',
         installedAt,
       },
-      update: { locationId: location.id, name: seedDevice.name },
+      update: {
+        locationId: location.id,
+        name: seedDevice.name,
+        status: (seedDevice.status ?? 'ACTIVE') as DeviceStatus,
+      },
     });
 
     // Riwayat status: baris pertama selalu ada agar timeline device tidak
@@ -397,6 +408,17 @@ async function main(): Promise<void> {
             reason: 'Telemetri pertama diterima',
             changedAt: new Date(installedAt.getTime() + 3600 * 1000),
           },
+          ...(device.status === DeviceStatus.MAINTENANCE
+            ? [
+                {
+                  deviceId: device.id,
+                  fromStatus: DeviceStatus.ACTIVE,
+                  toStatus: DeviceStatus.MAINTENANCE,
+                  reason: 'Penggantian sensor anemometer terjadwal',
+                  changedAt: new Date(now.getTime() - 2 * 24 * 3600 * 1000),
+                },
+              ]
+            : []),
         ],
       });
     }

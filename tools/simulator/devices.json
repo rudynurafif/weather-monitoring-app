@@ -7,7 +7,11 @@
     "Nilai-nilai ini SENGAJA di-commit karena memang hanya untuk data contoh di",
     "mesin pengembang dan agar reviewer bisa menjalankan simulator tanpa menyalin",
     "secret dari mana-mana. Pada deployment sungguhan, kredensial dibuat lewat",
-    "POST /api/v1/devices dan secret-nya hanya pernah muncul sekali di response."
+    "POST /api/v1/devices dan secret-nya hanya pernah muncul sekali di response.",
+    "",
+    "Ketinggian lokasi sengaja dibuat beragam (3 m sampai 1400 m) supaya data",
+    "contoh memperlihatkan lapse rate: tiap naik 1000 m, suhu turun sekitar 6,5 C.",
+    "Stasiun pesisir akan terlihat jauh lebih panas daripada stasiun pegunungan."
   ],
   "devices": [
     {
@@ -15,6 +19,7 @@
       "name": "Stasiun Cuaca Garut Kota",
       "key_id": "a1b2c3d4e5f60001",
       "secret": "wsk_dev_garut_kota_seed_secret_0001",
+      "status": "ACTIVE",
       "location": {
         "name": "Garut Kota",
         "latitude": -7.214,
@@ -27,6 +32,7 @@
       "name": "Stasiun Cuaca Lembang",
       "key_id": "a1b2c3d4e5f60002",
       "secret": "wsk_dev_lembang_seed_secret_0002",
+      "status": "ACTIVE",
       "location": {
         "name": "Lembang",
         "latitude": -6.8118,
@@ -39,11 +45,90 @@
       "name": "Stasiun Cuaca Cirebon Pesisir",
       "key_id": "a1b2c3d4e5f60003",
       "secret": "wsk_dev_cirebon_seed_secret_0003",
+      "status": "ACTIVE",
       "location": {
         "name": "Cirebon Pesisir",
         "latitude": -6.7063,
         "longitude": 108.5571,
         "altitude_m": 5
+      }
+    },
+    {
+      "device_code": "WS-BGR-004",
+      "name": "Stasiun Cuaca Puncak Bogor",
+      "key_id": "a1b2c3d4e5f60004",
+      "secret": "wsk_dev_puncak_bogor_seed_secret_0004",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Puncak Bogor",
+        "latitude": -6.7,
+        "longitude": 106.95,
+        "altitude_m": 1400
+      }
+    },
+    {
+      "device_code": "WS-SMD-005",
+      "name": "Stasiun Cuaca Sumedang Tanjungsari",
+      "key_id": "a1b2c3d4e5f60005",
+      "secret": "wsk_dev_sumedang_seed_secret_0005",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Sumedang Tanjungsari",
+        "latitude": -6.89,
+        "longitude": 107.83,
+        "altitude_m": 850
+      }
+    },
+    {
+      "device_code": "WS-TSM-006",
+      "name": "Stasiun Cuaca Tasikmalaya Kota",
+      "key_id": "a1b2c3d4e5f60006",
+      "secret": "wsk_dev_tasikmalaya_seed_secret_0006",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Tasikmalaya Kota",
+        "latitude": -7.327,
+        "longitude": 108.22,
+        "altitude_m": 351
+      }
+    },
+    {
+      "device_code": "WS-SKB-007",
+      "name": "Stasiun Cuaca Palabuhanratu",
+      "key_id": "a1b2c3d4e5f60007",
+      "secret": "wsk_dev_palabuhanratu_seed_secret_0007",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Palabuhanratu",
+        "latitude": -6.988,
+        "longitude": 106.55,
+        "altitude_m": 12
+      }
+    },
+    {
+      "device_code": "WS-IDM-008",
+      "name": "Stasiun Cuaca Indramayu Pantura",
+      "key_id": "a1b2c3d4e5f60008",
+      "secret": "wsk_dev_indramayu_seed_secret_0008",
+      "status": "MAINTENANCE",
+      "location": {
+        "name": "Indramayu Pantura",
+        "latitude": -6.327,
+        "longitude": 108.32,
+        "altitude_m": 3
+      }
+    },
+    {
+      "device_code": "WS-BDW-009",
+      "name": "Stasiun Cuaca Dago Atas",
+      "key_id": "a1b2c3d4e5f60009",
+      "secret": "wsk_dev_dago_atas_seed_secret_0009",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Bandung Dago Atas",
+        "latitude": -6.865,
+        "longitude": 107.615,
+        "altitude_m": 900
       }
     }
   ]

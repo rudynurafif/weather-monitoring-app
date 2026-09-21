@@ -8,3 +8,26 @@ body {
   background-color: #f8fafc;
   color: #0f172a;
 }
+
+/*
+ * Kursor tangan pada semua kontrol yang bisa diklik.
+ *
+ * Tailwind v4 mengikuti default browser, yang memberi `cursor: default` pada
+ * <button> — berbeda dari Tailwind v3 yang menambahkan pointer sendiri. Tanpa
+ * aturan ini, tombol terasa tidak bisa diklik padahal bisa.
+ *
+ * Tombol yang sedang nonaktif dikecualikan dan diberi `not-allowed`, supaya
+ * kursornya jujur menyampaikan bahwa klik di situ memang tidak akan terjadi.
+ */
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']),
+select,
+summary {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+

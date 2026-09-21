@@ -125,7 +125,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ id: str
   return (
     <div className="space-y-4">
       <Link href="/" className="text-sm text-slate-500 hover:text-slate-800">
-        ← Kembali ke ikhtisar
+        ← Kembali
       </Link>
 
       {device.isLoading && <LoadingState label="Memuat detail stasiun..." />}

@@ -18,7 +18,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             </Link>
             <nav className="flex gap-4 text-sm">
               <Link href="/" className="text-slate-600 hover:text-slate-900">
-                Ikhtisar
+                Overview
               </Link>
               <Link href="/manage" className="text-slate-600 hover:text-slate-900">
                 Manajemen

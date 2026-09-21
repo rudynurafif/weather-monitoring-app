@@ -18,6 +18,14 @@
     "migrate": "npm run migrate --workspace=apps/api",
     "seed": "npm run seed --workspace=apps/api",
     "test": "npm run test --workspace=apps/api",
-    "simulate": "node tools/simulator/simulator.js"
+    "simulate": "node tools/simulator/simulator.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.25",
+    "typescript-eslint": "^8.70.0"
   }
 }
