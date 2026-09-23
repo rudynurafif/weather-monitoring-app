@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { apiFetch, ApiError, type DeviceDetail, type DeviceOverview } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { useApi } from '@/lib/use-api';
+import { Modal } from '@/components/modal';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states';
 
 interface DeviceListItem {
@@ -140,33 +141,49 @@ function DevicesPanel() {
         <button
           type="button"
           onClick={() => {
-            setShowForm((value) => !value);
+            setShowForm(true);
             setEditing(null);
           }}
           className="ml-auto rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
         >
-          {showForm ? 'Tutup form' : 'Tambah device'}
+          Tambah device
         </button>
       </div>
 
-      {showForm && (
-        <CreateDeviceForm
-          onCreated={() => {
-            setReloadToken((value) => value + 1);
-          }}
-        />
-      )}
+      <Modal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title="Daftarkan Device Baru"
+        description="Identitas stasiun beserta lokasi pemasangannya."
+        size="lg"
+      >
+        {showForm && (
+          <CreateDeviceForm
+            onCreated={() => {
+              setReloadToken((value) => value + 1);
+            }}
+          />
+        )}
+      </Modal>
 
-      {editing && (
-        <EditDeviceForm
-          key={editing.id}
-          device={editing}
-          onSaved={() => {
-            setReloadToken((value) => value + 1);
-          }}
-          onClose={() => setEditing(null)}
-        />
-      )}
+      <Modal
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        title={editing ? `Ubah Device ${editing.device_code}` : 'Ubah Device'}
+        description="Kode device tidak bisa diubah — ia dipakai firmware sebagai identitas di setiap payload."
+        size="lg"
+      >
+        {editing && (
+          <EditDeviceForm
+            key={editing.id}
+            device={editing}
+            onSaved={() => {
+              setReloadToken((value) => value + 1);
+            }}
+            onClose={() => setEditing(null)}
+          />
+        )}
+      </Modal>
 
       {devices.isLoading && <LoadingState label="Memuat daftar device..." />}
       {devices.error && !devices.data && (
@@ -345,8 +362,7 @@ function CreateDeviceForm({ onCreated }: { onCreated: () => void }) {
   const inputClass = 'w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm';
 
   return (
-    <form onSubmit={submit} className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
-      <h2 className="text-sm font-semibold text-slate-900">Daftarkan Device Baru</h2>
+    <form onSubmit={submit} className="space-y-4">
 
       {/* --- Identitas device --- */}
       <div className="grid gap-3 sm:grid-cols-3">
@@ -672,29 +688,7 @@ function EditDeviceForm({
   const inputClass = 'w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm';
 
   return (
-    <form
-      onSubmit={save}
-      className="space-y-4 rounded-lg border border-slate-300 bg-white p-4 ring-1 ring-slate-900/5"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-900">
-            Ubah Device <span className="font-mono text-xs text-slate-500">{device.device_code}</span>
-          </h2>
-          <p className="text-xs text-slate-500">
-            Kode device tidak bisa diubah — ia dipakai firmware sebagai identitas di setiap payload.
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-        >
-          Tutup
-        </button>
-      </div>
-
+    <form onSubmit={save} className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="text-sm">
           <span className="mb-1 block text-xs font-medium text-slate-600">Nama stasiun</span>
