@@ -117,6 +117,17 @@ export class SensorsController {
 
   // --- Kalibrasi -----------------------------------------------------
 
+  @Get('sensors/:id/installations')
+  @ApiOperation({
+    summary: 'Riwayat pemasangan sensor',
+    description:
+      'Sensor ini pernah terpasang di device mana saja, sejak kapan sampai kapan. ' +
+      'removed_at bernilai null berarti pemasangan yang sedang berlaku.',
+  })
+  listInstallations(@Param('id', ParseUUIDPipe) id: string) {
+    return this.sensors.listInstallations(id);
+  }
+
   @Get('sensors/:id/calibrations')
   @ApiOperation({ summary: 'Riwayat kalibrasi sebuah sensor' })
   listCalibrations(@Param('id', ParseUUIDPipe) sensorId: string) {

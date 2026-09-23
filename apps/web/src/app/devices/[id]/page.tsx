@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { use, useState } from 'react';
 import {
   apiFetch,
@@ -13,6 +12,7 @@ import { connectivityStyle, formatDateTime, formatNumber, relativeMinutes } from
 import { useApi } from '@/lib/use-api';
 import { EmptyState, ErrorState, LoadingState, RefreshBar } from '@/components/states';
 import { RainChart, TempHumidityChart, WindRose, type SeriesPoint } from '@/components/charts';
+import { useRouter } from 'next/navigation';
 
 const REFRESH_SECONDS = 30;
 
@@ -47,6 +47,7 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ id: str
   const { id } = use(params);
   const [rangeKey, setRangeKey] = useState<RangeKey>('24h');
   const range = RANGES.find((item) => item.key === rangeKey)!;
+  const router = useRouter();
 
   const device = useApi<DeviceDetail>(
     async () => (await apiFetch<DeviceDetail>(`/devices/${id}`)).data,
@@ -124,9 +125,9 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ id: str
 
   return (
     <div className="space-y-4">
-      <Link href="/" className="text-sm text-slate-500 hover:text-slate-800">
+      <button type="button" onClick={() => router.back()} className="text-sm text-slate-500 hover:text-slate-800">
         ← Kembali
-      </Link>
+      </button>
 
       {device.isLoading && <LoadingState label="Memuat detail stasiun..." />}
       {device.error && !device.data && <ErrorState error={device.error} onRetry={device.refresh} />}

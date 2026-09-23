@@ -29,11 +29,38 @@ Satu perintah menjalankan database, migrasi, seeder, backend, dan frontend.
 | Swagger | http://localhost:3001/docs |
 | Health check | http://localhost:3001/healthz |
 
-Seeder berjalan otomatis saat container API start dan mengisi **9 stasiun, 63 sensor, serta data historis 7 hari (~127.000 pembacaan)** — dashboard langsung berisi tanpa perlu menunggu.
+Seeder berjalan otomatis saat container API start dan mengisi **25 stasiun, 175 sensor, serta data historis 7 hari (~325.000 pembacaan)** — dashboard langsung berisi tanpa perlu menunggu. Rentang datanya dihitung relatif terhadap waktu dijalankan, jadi data berakhir tepat di saat ini.
 
-Ketinggian kesembilan lokasi sengaja dibuat beragam, dari 3 m di pesisir Indramayu sampai 1.400 m di Puncak Bogor, sehingga data contoh memperlihatkan *lapse rate* yang benar: suhu rata-rata turun dari 26,2 °C di pesisir menjadi 17,1 °C di pegunungan.
+Seeder bersifat idempoten dan **melewati pembuatan data historis kalau pembacaan sudah ada**, sehingga menjalankannya ulang tidak menggandakan data — tetapi juga tidak memajukan datanya ke waktu sekarang. Kalau database sudah lama tidak dipakai dan seluruh stasiun tampak diam, kosongkan volume-nya agar data historisnya dibuat ulang:
 
-Satu stasiun (`WS-IDM-008`) sengaja berstatus `MAINTENANCE` agar filter status di halaman manajemen punya sesuatu untuk disaring, dan tiga stasiun membawa anomali yang mewakili kasus Bagian F.3 — sentinel `-999`, kelembapan 150, counter reset, dan satu stasiun yang offline tiga jam sehingga chart-nya memperlihatkan gap.
+```bash
+docker compose down -v && docker compose up --build
+```
+
+Ketinggian kedua puluh lima lokasi sengaja dibuat beragam, dari 3 m di pesisir Indramayu dan Semarang sampai 2.093 m di Dieng, sehingga data contoh memperlihatkan *lapse rate* yang benar: suhu rata-rata turun dari **26,2 °C** di pesisir menjadi **12,6 °C** di Dieng — sekitar 6,5 °C tiap 1.000 m, persis seperti di lapangan.
+
+Tiga stasiun berstatus `PROVISIONED` sengaja **tidak** diberi data historis. Statusnya berarti sudah terdaftar tetapi belum dipasang, jadi memberinya tujuh hari pembacaan justru membuat statusnya berbohong — dan sebagai efek sampingnya dashboard punya contoh nyata untuk *empty state* dan untuk penanda "tidak mengirim data".
+
+Dua stasiun (`WS-IDM-008`, `WS-TGL-018`) sengaja berstatus `MAINTENANCE` agar filter status di halaman manajemen punya sesuatu untuk disaring, dan tiga stasiun membawa anomali yang mewakili kasus Bagian F.3 — sentinel `-999`, kelembapan 150, counter reset, dan satu stasiun yang offline tiga jam sehingga chart-nya memperlihatkan gap.
+
+### Alur peninjauan yang disarankan
+
+Urutan ini menyentuh setiap ketentuan wajib dalam beberapa menit.
+
+| Langkah | Yang dilihat | Ketentuan |
+|---|---|---|
+| Buka http://localhost:3000 | Kartu per stasiun: lokasi, status, suhu & kelembapan terkini, waktu update. Tepat setelah seeder, seluruh stasiun baru saja mengirim sehingga belum ada yang bertanda diam; biarkan stack menganggur 15 menit tanpa simulator dan penanda "tidak mengirim data lebih dari 15 menit" akan muncul sendiri | G.1 |
+| Klik salah satu stasiun | Nilai terkini seluruh sensor, chart suhu+kelembapan dua sumbu, hujan per jam/hari, wind rose. Ganti rentang 24 jam / 7 hari / 30 hari dan perhatikan baris "Resolusi" ikut berubah — interval ditentukan server, bukan browser | G.2, E |
+| Buka `WS-BDG-002`, rentang 7 hari | Stasiun ini sengaja offline 3 jam pada hari ke-3: garis chart **putus**, tidak disambung dan tidak dianggap nol | G |
+| Buka `WS-GRT-001` | Membawa pembacaan bertanda: sentinel `-999` (nilai di-null-kan, flag `SENSOR_ERROR`) dan kelembapan 150 (disimpan apa adanya, flag `OUT_OF_RANGE`). `WS-CRB-003` membawa counter reset hujan | F.3 |
+| Halaman **Manajemen → Device** | Filter status (`WS-IDM-008` berstatus `MAINTENANCE`), pencarian, dan pagination | A.5 |
+| Tombol **Tambah device** | Modal registrasi: identitas stasiun plus lokasi baru (koordinat, ketinggian) atau memilih lokasi yang sudah ada. Kredensial device hanya ditampilkan **sekali** setelah dibuat | A.1, A.2 |
+| Tombol **Ubah** pada satu baris | Modal ubah: status hanya menawarkan transisi yang diizinkan, ada alasan perubahan, rotasi kredensial, dan soft delete | A.2, A.3, A.5 |
+| Tab **Sensor & Kalibrasi** | Tabel **Tipe Sensor** (satuan, rentang valid, presisi, sifat kumulatif/sirkular) yang bisa dibuka, filter per tipe, dan tombol Tambah sensor | B.1, B.5 |
+| Tombol **Kelola** pada satu sensor | Modal berisi pemasangan/pelepasan, **riwayat pemasangan** (pernah di device mana saja, sejak kapan sampai kapan), form kalibrasi dengan "berlaku sejak", dan **riwayat kalibrasi** yang rentangnya bersambung tanpa tumpang tindih | B.2, B.3 |
+| http://localhost:3001/docs | Swagger seluruh endpoint | E |
+
+Untuk melihat penanganan data yang terlambat dan duplikat secara langsung, jalankan simulator di bawah sambil membuka dashboard.
 
 ### Menjalankan device simulator
 
@@ -188,6 +215,7 @@ Ditulis terbuka; masing-masing disertai rencana penyelesaiannya.
 │   │   │   ├── schema.prisma     # Skema database
 │   │   │   ├── migrations/       # Migrasi Prisma + migrasi tangan (hypertable)
 │   │   │   └── seed.ts           # Seeder idempoten
+│   │   ├── scripts/              # Pembungkus Prisma CLI agar .env root terbaca
 │   │   └── src/
 │   │       ├── aggregation/      # Worker agregasi + SQL perhitungan ulang
 │   │       ├── auth/             # Kredensial dan guard device
@@ -195,12 +223,13 @@ Ditulis terbuka; masing-masing disertai rencana penyelesaiannya.
 │   │       ├── devices/          # CRUD device, kredensial, health
 │   │       ├── ingestion/        # Jalur ingestion
 │   │       │   └── domain/       # Logika murni + unit test
+│   │       ├── locations/        # CRUD lokasi pemasangan stasiun
 │   │       ├── readings/         # Query time-series + kebijakan resolusi
 │   │       └── sensors/          # CRUD sensor, pemasangan, kalibrasi
 │   └── web/                      # Frontend Next.js
 │       └── src/
 │           ├── app/              # Halaman: ikhtisar, detail, manajemen
-│           ├── components/       # Chart dan komponen state
+│           ├── components/       # Chart, modal, dan komponen state
 │           └── lib/              # Klien API, format WIB, hook
 ├── tools/simulator/              # Device simulator
 ├── docs/                         # ERD, alur data, dokumentasi API

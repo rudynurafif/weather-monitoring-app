@@ -9,8 +9,9 @@
  *
  * Yang dibuat:
  *   - 7 tipe sensor sesuai spesifikasi payload
- *   - 3 lokasi dan 3 device beserta kredensialnya
- *   - 21 sensor fisik (7 per device) dengan riwayat pemasangan
+ *   - 25 lokasi dan 25 device beserta kredensialnya, dibaca dari
+ *     tools/simulator/devices.json sebagai satu-satunya sumber kebenaran
+ *   - 175 sensor fisik (7 per device) dengan riwayat pemasangan
  *   - riwayat kalibrasi, termasuk satu sensor yang kalibrasinya pernah diganti
  *   - data historis 7 hari, lengkap dengan anomali yang disengaja
  *
@@ -95,10 +96,12 @@ const HISTORY_DAYS = 7;
  * Jarak antar sampel data historis, dalam menit.
  *
  * Device sungguhan mengirim tiap 60 detik, dan simulator pun begitu. Data
- * historis sengaja dibuat per 5 menit: 7 hari x 3 device x 7 sensor pada
- * resolusi satu menit berarti 211.680 baris yang membuat `docker compose up`
- * pertama terasa lama, sementara untuk chart 5 menit sudah lebih dari cukup
- * (288 titik per hari). Pilihan ini dicatat di README.
+ * historis sengaja dibuat per 5 menit: 7 hari x 22 device berdata x 7 sensor
+ * pada resolusi satu menit berarti sekitar 1,5 juta baris yang membuat
+ * `docker compose up` pertama terasa lama, sementara untuk chart 5 menit sudah
+ * lebih dari cukup (288 titik per hari). Pada resolusi 5 menit jumlahnya
+ * sekitar 325.000 baris dan seeder selesai dalam kisaran setengah menit.
+ * Pilihan ini dicatat di README.
  */
 const HISTORY_INTERVAL_MINUTES = 5;
 
@@ -538,6 +541,17 @@ async function main(): Promise<void> {
     }
 
     // --- Data historis --------------------------------------------------
+    //
+    // Device berstatus PROVISIONED sengaja TIDAK diberi data. Statusnya berarti
+    // sudah terdaftar tetapi belum dipasang di lapangan, jadi memberinya tujuh
+    // hari pembacaan justru membuat statusnya berbohong. Sebagai efek
+    // sampingnya, dashboard punya contoh nyata untuk empty state dan untuk
+    // penanda "tidak mengirim data".
+    if (device.status === DeviceStatus.PROVISIONED) {
+      console.log('    berstatus PROVISIONED, belum dipasang: data historis dilewati');
+      continue;
+    }
+
     const existingReadings = await prisma.sensorReading.count({
       where: { deviceId: device.id, deviceTime: { gte: historyStart } },
     });

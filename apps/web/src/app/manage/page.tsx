@@ -6,6 +6,7 @@ import { apiFetch, ApiError, type DeviceDetail, type DeviceOverview } from '@/li
 import { formatDateTime } from '@/lib/format';
 import { useApi } from '@/lib/use-api';
 import { Modal } from '@/components/modal';
+import { Pagination, type PaginationMeta } from '@/components/pagination';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states';
 
 interface DeviceListItem {
@@ -26,7 +27,12 @@ interface RotatedCredential {
 
 interface PaginatedDevices {
   rows: DeviceListItem[];
-  pagination: { page: number; per_page: number; total: number; total_pages: number };
+  pagination: PaginationMeta;
+}
+
+interface PaginatedSensors {
+  rows: SensorListItem[];
+  pagination: PaginationMeta;
 }
 
 interface LocationOption {
@@ -36,6 +42,39 @@ interface LocationOption {
   longitude: number;
   altitude_m: number;
   device_count: number;
+}
+
+interface SensorTypeItem {
+  key: string;
+  display_name: string;
+  unit: string;
+  min_valid: number;
+  max_valid: number;
+  precision: number;
+  is_cumulative: boolean;
+  unit_per_count: number | null;
+  is_circular: boolean;
+}
+
+interface InstallationHistoryItem {
+  id: string;
+  device_code: string;
+  device_name: string;
+  channel: number;
+  installed_at: string;
+  removed_at: string | null;
+  is_current: boolean;
+  notes: string | null;
+}
+
+interface CalibrationItem {
+  id: string;
+  offset: number;
+  scale: number;
+  effective_from: string;
+  effective_to: string | null;
+  is_current: boolean;
+  notes: string | null;
 }
 
 interface SensorListItem {
@@ -243,7 +282,7 @@ function DevicesPanel() {
                           href={`/devices/${device.id}`}
                           className="text-xs font-medium text-slate-700 hover:text-slate-900"
                         >
-                          Lihat →
+                          Detail →
                         </Link>
                       </div>
                     </td>
@@ -253,30 +292,7 @@ function DevicesPanel() {
             </table>
           </div>
 
-          <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-xs text-slate-600">
-            <span>
-              Halaman {devices.data.pagination.page} dari {devices.data.pagination.total_pages} ·{' '}
-              {devices.data.pagination.total} device
-            </span>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setPage((value) => Math.max(1, value - 1))}
-                disabled={devices.data.pagination.page <= 1}
-                className="rounded-md border border-slate-300 px-2 py-1 disabled:opacity-40"
-              >
-                Sebelumnya
-              </button>
-              <button
-                type="button"
-                onClick={() => setPage((value) => value + 1)}
-                disabled={devices.data.pagination.page >= devices.data.pagination.total_pages}
-                className="rounded-md border border-slate-300 px-2 py-1 disabled:opacity-40"
-              >
-                Berikutnya
-              </button>
-            </div>
-          </div>
+          <Pagination meta={devices.data.pagination} onChange={setPage} label="device" />
         </div>
       )}
     </div>
@@ -831,11 +847,28 @@ function EditDeviceForm({
 
 function SensorsPanel() {
   const [reloadToken, setReloadToken] = useState(0);
-  const [selectedSensor, setSelectedSensor] = useState<string>('');
+  const [managing, setManaging] = useState<SensorListItem | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [typeFilter, setTypeFilter] = useState('');
+  const [page, setPage] = useState(1);
 
-  const sensors = useApi<SensorListItem[]>(
-    async () => (await apiFetch<SensorListItem[]>('/sensors', { query: { per_page: 100 } })).data,
+  const sensorTypes = useApi<SensorTypeItem[]>(
+    async () => (await apiFetch<SensorTypeItem[]>('/sensor-types')).data,
     [reloadToken],
+  );
+
+  const sensors = useApi<PaginatedSensors>(
+    async () => {
+      const result = await apiFetch<SensorListItem[]>('/sensors', {
+        query: { page, per_page: 20, sensor_type: typeFilter || undefined },
+      });
+
+      return {
+        rows: result.data,
+        pagination: result.meta.pagination as PaginationMeta,
+      };
+    },
+    [reloadToken, typeFilter, page],
   );
 
   const devices = useApi<DeviceOverview[]>(
@@ -843,18 +876,56 @@ function SensorsPanel() {
     [reloadToken],
   );
 
+  const refreshAll = () => setReloadToken((value) => value + 1);
+
   return (
     <div className="space-y-4">
+      <SensorTypesPanel types={sensorTypes} onChanged={refreshAll} />
+
+      <div className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-4">
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Tipe sensor</span>
+          <select
+            value={typeFilter}
+            onChange={(event) => {
+              setTypeFilter(event.target.value);
+              // Kembali ke halaman pertama: halaman 5 dari hasil lama hampir
+              // selalu di luar jangkauan hasil yang baru disaring.
+              setPage(1);
+            }}
+            className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          >
+            <option value="">Semua tipe</option>
+            {sensorTypes.data?.map((type) => (
+              <option key={type.key} value={type.key}>
+                {type.key}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <button
+          type="button"
+          onClick={() => setShowCreate(true)}
+          className="ml-auto rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
+        >
+          Tambah sensor
+        </button>
+      </div>
+
       {sensors.isLoading && <LoadingState label="Memuat sensor..." />}
       {sensors.error && !sensors.data && (
         <ErrorState error={sensors.error} onRetry={sensors.refresh} />
       )}
 
-      {sensors.data && sensors.data.length === 0 && (
-        <EmptyState title="Belum ada sensor terdaftar" />
+      {sensors.data && sensors.data.rows.length === 0 && (
+        <EmptyState
+          title="Tidak ada sensor yang cocok"
+          description="Ubah filter tipe, atau daftarkan sensor baru."
+        />
       )}
 
-      {sensors.data && sensors.data.length > 0 && (
+      {sensors.data && sensors.data.rows.length > 0 && (
         <div className="rounded-lg border border-slate-200 bg-white">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
@@ -868,8 +939,8 @@ function SensorsPanel() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {sensors.data.map((sensor) => (
-                  <tr key={sensor.id} className={selectedSensor === sensor.id ? 'bg-slate-50' : ''}>
+                {sensors.data.rows.map((sensor) => (
+                  <tr key={sensor.id}>
                     <td className="px-4 py-3 font-mono text-xs text-slate-700">
                       {sensor.serial_number}
                     </td>
@@ -883,12 +954,10 @@ function SensorsPanel() {
                     <td className="px-4 py-3 text-right">
                       <button
                         type="button"
-                        onClick={() =>
-                          setSelectedSensor(selectedSensor === sensor.id ? '' : sensor.id)
-                        }
-                        className="text-xs font-medium text-slate-700 hover:text-slate-900"
+                        onClick={() => setManaging(sensor)}
+                        className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                       >
-                        {selectedSensor === sensor.id ? 'Tutup' : 'Kelola'}
+                        Kelola
                       </button>
                     </td>
                   </tr>
@@ -896,17 +965,431 @@ function SensorsPanel() {
               </tbody>
             </table>
           </div>
+
+          <Pagination meta={sensors.data.pagination} onChange={setPage} label="sensor" />
         </div>
       )}
 
-      {selectedSensor && (
-        <SensorActions
-          sensor={sensors.data?.find((item) => item.id === selectedSensor) ?? null}
-          devices={devices.data ?? []}
-          onChanged={() => setReloadToken((value) => value + 1)}
-        />
-      )}
+      <Modal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        title="Daftarkan Sensor Fisik"
+        description="Sensor didaftarkan lebih dulu sebagai barang, baru kemudian dipasang ke device."
+      >
+        {showCreate && (
+          <CreateSensorForm types={sensorTypes.data ?? []} onCreated={refreshAll} />
+        )}
+      </Modal>
+
+      <Modal
+        open={managing !== null}
+        onClose={() => setManaging(null)}
+        title={managing ? `Kelola ${managing.serial_number}` : 'Kelola Sensor'}
+        description={managing ? `Tipe ${managing.sensor_type}` : undefined}
+        size="lg"
+      >
+        {managing && (
+          <SensorActions
+            key={managing.id}
+            sensor={managing}
+            devices={devices.data ?? []}
+            onChanged={refreshAll}
+          />
+        )}
+      </Modal>
     </div>
+  );
+}
+
+/**
+ * Master data tipe sensor (Bagian B.1).
+ *
+ * Ditampilkan sebagai tabel terbuka, bukan disembunyikan di balik menu, karena
+ * inilah yang menentukan rentang valid setiap pembacaan: nilai di luar
+ * min/max di sini yang ditandai `OUT_OF_RANGE` saat ingestion. Tanpa
+ * menampilkannya, angka batas itu hanya ada di dalam database.
+ */
+function SensorTypesPanel({
+  types,
+  onChanged,
+}: {
+  types: ReturnType<typeof useApi<SensorTypeItem[]>>;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="flex items-center gap-2 text-sm font-semibold text-slate-900"
+        >
+          <span className="text-xs text-slate-400">{open ? '▾' : '▸'}</span>
+          Tipe Sensor
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-600">
+            {types.data?.length ?? '—'}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Tambah tipe
+        </button>
+      </div>
+
+      {open && (
+        <div className="overflow-x-auto border-t border-slate-200">
+          {types.isLoading && <LoadingState label="Memuat tipe sensor..." />}
+          {types.error && !types.data && (
+            <ErrorState error={types.error} onRetry={types.refresh} />
+          )}
+
+          {types.data && (
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-slate-200 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">Kunci</th>
+                  <th className="px-4 py-3">Nama</th>
+                  <th className="px-4 py-3">Satuan</th>
+                  <th className="px-4 py-3">Rentang valid</th>
+                  <th className="px-4 py-3">Presisi</th>
+                  <th className="px-4 py-3">Sifat</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {types.data.map((type) => (
+                  <tr key={type.key}>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-700">{type.key}</td>
+                    <td className="px-4 py-3 text-slate-900">{type.display_name}</td>
+                    <td className="px-4 py-3 text-slate-600">{type.unit}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-600">
+                      {type.min_valid} … {type.max_valid}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-600">{type.precision} desimal</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">
+                      {/* Dua sifat yang mengubah cara nilainya diperlakukan, bukan
+                          sekadar keterangan: kumulatif dihitung sebagai selisih,
+                          dan sirkular dirata-ratakan secara vektor. */}
+                      {type.is_cumulative && (
+                        <span className="mr-1 rounded bg-amber-50 px-1.5 py-0.5 text-amber-800">
+                          kumulatif{type.unit_per_count ? ` · ${type.unit_per_count}/tip` : ''}
+                        </span>
+                      )}
+                      {type.is_circular && (
+                        <span className="rounded bg-sky-50 px-1.5 py-0.5 text-sky-800">
+                          sirkular
+                        </span>
+                      )}
+                      {!type.is_cumulative && !type.is_circular && '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      <Modal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title="Tambah Tipe Sensor"
+        description="Menambah tipe TIDAK memerlukan perubahan skema — konsekuensi langsung dari penyimpanan narrow."
+      >
+        {showForm && (
+          <CreateSensorTypeForm
+            onCreated={() => {
+              onChanged();
+              types.refresh();
+            }}
+          />
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+function CreateSensorTypeForm({ onCreated }: { onCreated: () => void }) {
+  const [key, setKey] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [unit, setUnit] = useState('');
+  const [minValid, setMinValid] = useState('0');
+  const [maxValid, setMaxValid] = useState('100');
+  const [precision, setPrecision] = useState('2');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+
+    try {
+      await apiFetch('/sensor-types', {
+        method: 'POST',
+        body: JSON.stringify({
+          key,
+          display_name: displayName,
+          unit,
+          min_valid: Number(minValid),
+          max_valid: Number(maxValid),
+          precision: Number(precision),
+        }),
+      });
+
+      setSaved(true);
+      setKey('');
+      setDisplayName('');
+      setUnit('');
+      onCreated();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught : new ApiError('UNKNOWN', 'Gagal', 0));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const inputClass = 'w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm';
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Kunci *</span>
+          <input
+            required
+            value={key}
+            onChange={(event) => setKey(event.target.value.toLowerCase())}
+            placeholder="soil_moisture"
+            className={inputClass}
+          />
+          <span className="mt-1 block text-xs text-slate-400">
+            Huruf kecil, angka, garis bawah. Inilah nilai <code>s</code> pada payload device.
+          </span>
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Nama tampilan *</span>
+          <input
+            required
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            placeholder="Kelembapan Tanah"
+            className={inputClass}
+          />
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Satuan *</span>
+          <input
+            required
+            value={unit}
+            onChange={(event) => setUnit(event.target.value)}
+            placeholder="%"
+            className={inputClass}
+          />
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Minimum valid *</span>
+          <input
+            required
+            type="number"
+            step="any"
+            value={minValid}
+            onChange={(event) => setMinValid(event.target.value)}
+            className={inputClass}
+          />
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Maksimum valid *</span>
+          <input
+            required
+            type="number"
+            step="any"
+            value={maxValid}
+            onChange={(event) => setMaxValid(event.target.value)}
+            className={inputClass}
+          />
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Presisi</span>
+          <input
+            type="number"
+            min={0}
+            max={6}
+            value={precision}
+            onChange={(event) => setPrecision(event.target.value)}
+            className={inputClass}
+          />
+        </label>
+      </div>
+
+      <p className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        Rentang valid bukan penyaring: pembacaan di luar rentang tetap disimpan dan hanya ditandai
+        <span className="mx-1 font-mono">OUT_OF_RANGE</span>. Nilai 150% adalah bukti sensor rusak —
+        bukti yang hilang kalau barisnya dibuang.
+      </p>
+
+      {error && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error.message} <span className="font-mono text-xs">({error.code})</span>
+        </p>
+      )}
+
+      {saved && !error && (
+        <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          Tipe sensor tersimpan.
+        </p>
+      )}
+
+      <button
+        type="submit"
+        disabled={busy}
+        className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+      >
+        {busy ? 'Menyimpan...' : 'Simpan'}
+      </button>
+    </form>
+  );
+}
+
+function CreateSensorForm({
+  types,
+  onCreated,
+}: {
+  types: SensorTypeItem[];
+  onCreated: () => void;
+}) {
+  const [serialNumber, setSerialNumber] = useState('');
+  const [sensorType, setSensorType] = useState('');
+  const [manufacturer, setManufacturer] = useState('');
+  const [model, setModel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+
+    try {
+      await apiFetch('/sensors', {
+        method: 'POST',
+        body: JSON.stringify({
+          serial_number: serialNumber,
+          sensor_type: sensorType,
+          ...(manufacturer ? { manufacturer } : {}),
+          ...(model ? { model } : {}),
+        }),
+      });
+
+      setSaved(true);
+      setSerialNumber('');
+      setManufacturer('');
+      setModel('');
+      onCreated();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught : new ApiError('UNKNOWN', 'Gagal', 0));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const inputClass = 'w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm';
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Nomor seri *</span>
+          <input
+            required
+            value={serialNumber}
+            onChange={(event) => setSerialNumber(event.target.value.toUpperCase())}
+            placeholder="TEMP-SN-0042"
+            className={inputClass}
+          />
+          <span className="mt-1 block text-xs text-slate-400">
+            Harus unik. Inilah identitas barangnya, yang bertahan meski berpindah device.
+          </span>
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Tipe sensor *</span>
+          <select
+            required
+            value={sensorType}
+            onChange={(event) => setSensorType(event.target.value)}
+            className={inputClass}
+          >
+            <option value="">Pilih tipe</option>
+            {types.map((type) => (
+              <option key={type.key} value={type.key}>
+                {type.key} — {type.display_name} ({type.unit})
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Produsen</span>
+          <input
+            value={manufacturer}
+            onChange={(event) => setManufacturer(event.target.value)}
+            placeholder="Sensirion"
+            className={inputClass}
+          />
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Model</span>
+          <input
+            value={model}
+            onChange={(event) => setModel(event.target.value)}
+            placeholder="SHT31"
+            className={inputClass}
+          />
+        </label>
+      </div>
+
+      <p className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        Sensor yang baru dibuat berstatus <span className="font-mono">IN_STOCK</span> — terdaftar
+        sebagai barang, belum terpasang di mana pun. Pemasangannya dilakukan lewat tombol Kelola.
+      </p>
+
+      {error && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error.message} <span className="font-mono text-xs">({error.code})</span>
+        </p>
+      )}
+
+      {saved && !error && (
+        <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          Sensor tersimpan.
+        </p>
+      )}
+
+      <button
+        type="submit"
+        disabled={busy}
+        className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+      >
+        {busy ? 'Menyimpan...' : 'Simpan'}
+      </button>
+    </form>
   );
 }
 
@@ -915,7 +1398,7 @@ function SensorActions({
   devices,
   onChanged,
 }: {
-  sensor: SensorListItem | null;
+  sensor: SensorListItem;
   devices: DeviceOverview[];
   onChanged: () => void;
 }) {
@@ -923,16 +1406,32 @@ function SensorActions({
   const [channel, setChannel] = useState(0);
   const [offset, setOffset] = useState('0');
   const [scale, setScale] = useState('1');
+  const [effectiveFrom, setEffectiveFrom] = useState('');
+  const [notes, setNotes] = useState('');
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
 
-  if (!sensor) return null;
+  // Riwayat pemasangan dan riwayat kalibrasi: keduanya inti Bagian B, dan
+  // keduanya hanya bermakna kalau bisa dilihat, bukan sekadar tersimpan.
+  const installations = useApi<InstallationHistoryItem[]>(
+    async () =>
+      (await apiFetch<InstallationHistoryItem[]>(`/sensors/${sensor.id}/installations`)).data,
+    [sensor.id, reloadToken],
+  );
+
+  const calibrations = useApi<CalibrationItem[]>(
+    async () => (await apiFetch<CalibrationItem[]>(`/sensors/${sensor.id}/calibrations`)).data,
+    [sensor.id, reloadToken],
+  );
 
   async function run(action: () => Promise<string>) {
     setBusy(true);
     setMessage(null);
+
     try {
       setMessage({ kind: 'ok', text: await action() });
+      setReloadToken((value) => value + 1);
       onChanged();
     } catch (caught) {
       setMessage({
@@ -948,15 +1447,16 @@ function SensorActions({
     (device) => device.device_code === sensor.installed_on?.device_code,
   );
 
+  const inputClass = 'w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm';
+
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-900">
-          Pemasangan · {sensor.serial_number}
-        </h2>
+    <div className="space-y-5">
+      {/* --- Pemasangan (B.2) --- */}
+      <section>
+        <h3 className="text-sm font-semibold text-slate-900">Pemasangan</h3>
 
         {sensor.installed_on ? (
-          <div className="mt-3 space-y-3">
+          <div className="mt-2 space-y-3">
             <p className="text-sm text-slate-600">
               Terpasang di {sensor.installed_on.device_code}, channel {sensor.installed_on.channel}.
             </p>
@@ -982,13 +1482,13 @@ function SensorActions({
             </button>
           </div>
         ) : (
-          <div className="mt-3 space-y-3">
-            <label className="block text-sm">
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <label className="text-sm">
               <span className="mb-1 block text-xs font-medium text-slate-600">Device tujuan</span>
               <select
                 value={deviceId}
                 onChange={(event) => setDeviceId(event.target.value)}
-                className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                className={inputClass}
               >
                 <option value="">Pilih device</option>
                 {devices.map((device) => (
@@ -999,62 +1499,126 @@ function SensorActions({
               </select>
             </label>
 
-            <label className="block text-sm">
+            <label className="text-sm">
               <span className="mb-1 block text-xs font-medium text-slate-600">Channel</span>
               <input
                 type="number"
                 min={0}
                 value={channel}
                 onChange={(event) => setChannel(Number(event.target.value))}
-                className="w-24 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                className={inputClass}
               />
               <span className="mt-1 block text-xs text-slate-400">
                 Pakai channel 1 untuk sensor kedua bertipe sama pada device yang sama.
               </span>
             </label>
 
-            <button
-              type="button"
-              disabled={busy || !deviceId}
-              onClick={() =>
-                void run(async () => {
-                  await apiFetch(`/devices/${deviceId}/sensors`, {
-                    method: 'POST',
-                    body: JSON.stringify({ sensor_id: sensor.id, channel }),
-                  });
-                  return 'Sensor terpasang.';
-                })
-              }
-              className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-            >
-              Pasang sensor
-            </button>
+            <div className="sm:col-span-2">
+              <button
+                type="button"
+                disabled={busy || !deviceId}
+                onClick={() =>
+                  void run(async () => {
+                    await apiFetch(`/devices/${deviceId}/sensors`, {
+                      method: 'POST',
+                      body: JSON.stringify({ sensor_id: sensor.id, channel }),
+                    });
+                    return 'Sensor terpasang.';
+                  })
+                }
+                className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                Pasang sensor
+              </button>
+            </div>
           </div>
         )}
       </section>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-900">Kalibrasi</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          Rumusnya: nilai = mentah × scale + offset. Kalibrasi baru berlaku mulai sekarang; data
-          lama TIDAK dihitung ulang.
+      {/* --- Riwayat pemasangan (B.2) --- */}
+      <section className="border-t border-slate-200 pt-4">
+        <h3 className="text-sm font-semibold text-slate-900">Riwayat Pemasangan</h3>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Pemindahan sensor membuat baris baru dan menutup yang lama — tidak ada baris yang ditimpa,
+          sehingga data lama tetap terhubung ke device tempat sensornya berada saat itu.
         </p>
 
-        <div className="mt-3 grid grid-cols-2 gap-3">
+        {installations.isLoading && <p className="mt-2 text-xs text-slate-500">Memuat...</p>}
+
+        {installations.data && installations.data.length === 0 && (
+          <p className="mt-2 text-xs text-slate-500">Sensor ini belum pernah dipasang.</p>
+        )}
+
+        {installations.data && installations.data.length > 0 && (
+          <ul className="mt-2 space-y-1 text-xs">
+            {installations.data.map((row) => (
+              <li key={row.id} className="flex flex-wrap items-center gap-x-2 text-slate-600">
+                <span className="font-mono text-slate-800">{row.device_code}</span>
+                <span>ch {row.channel}</span>
+                <span className="text-slate-400">·</span>
+                <span>{formatDateTime(row.installed_at)}</span>
+                <span className="text-slate-400">→</span>
+                {row.is_current ? (
+                  <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-800">
+                    masih terpasang
+                  </span>
+                ) : (
+                  <span>{formatDateTime(row.removed_at)}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* --- Kalibrasi (B.3) --- */}
+      <section className="border-t border-slate-200 pt-4">
+        <h3 className="text-sm font-semibold text-slate-900">Kalibrasi</h3>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Rumusnya: nilai = mentah × scale + offset. Kalibrasi baru menutup yang sedang berlaku pada
+          waktu mulainya, dan data lama <strong>tidak</strong> dihitung ulang — pembacaan yang sudah
+          tersimpan tetap memakai koreksi yang memang berlaku saat pengukurannya terjadi.
+        </p>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="text-sm">
             <span className="mb-1 block text-xs font-medium text-slate-600">Offset</span>
             <input
               value={offset}
               onChange={(event) => setOffset(event.target.value)}
-              className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              className={inputClass}
             />
           </label>
+
           <label className="text-sm">
             <span className="mb-1 block text-xs font-medium text-slate-600">Scale</span>
             <input
               value={scale}
               onChange={(event) => setScale(event.target.value)}
-              className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+              className={inputClass}
+            />
+          </label>
+
+          <label className="text-sm">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Berlaku sejak</span>
+            <input
+              type="datetime-local"
+              value={effectiveFrom}
+              onChange={(event) => setEffectiveFrom(event.target.value)}
+              className={inputClass}
+            />
+            <span className="mt-1 block text-xs text-slate-400">
+              Kosongkan untuk berlaku mulai sekarang. Waktu lokal WIB.
+            </span>
+          </label>
+
+          <label className="text-sm">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Catatan</span>
+            <input
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              placeholder="Hasil kalibrasi ulang di lab"
+              className={inputClass}
             />
           </label>
         </div>
@@ -1066,9 +1630,19 @@ function SensorActions({
             void run(async () => {
               await apiFetch(`/sensors/${sensor.id}/calibrations`, {
                 method: 'POST',
-                body: JSON.stringify({ offset: Number(offset), scale: Number(scale) }),
+                body: JSON.stringify({
+                  offset: Number(offset),
+                  scale: Number(scale),
+                  // Input datetime-local memberi waktu lokal tanpa zona. Diubah
+                  // ke UTC di sini supaya yang dikirim ke API selalu absolut,
+                  // sesuai aturan "UTC di mana-mana kecuali saat render".
+                  ...(effectiveFrom
+                    ? { effective_from: new Date(effectiveFrom).toISOString() }
+                    : {}),
+                  ...(notes ? { notes } : {}),
+                }),
               });
-              return 'Kalibrasi tersimpan dan berlaku mulai sekarang.';
+              return 'Kalibrasi tersimpan.';
             })
           }
           className="mt-3 rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
@@ -1077,12 +1651,45 @@ function SensorActions({
         </button>
       </section>
 
+      {/* --- Riwayat kalibrasi (B.3) --- */}
+      <section className="border-t border-slate-200 pt-4">
+        <h3 className="text-sm font-semibold text-slate-900">Riwayat Kalibrasi</h3>
+
+        {calibrations.isLoading && <p className="mt-2 text-xs text-slate-500">Memuat...</p>}
+
+        {calibrations.data && calibrations.data.length === 0 && (
+          <p className="mt-2 text-xs text-slate-500">Belum ada kalibrasi; koreksi dianggap netral.</p>
+        )}
+
+        {calibrations.data && calibrations.data.length > 0 && (
+          <ul className="mt-2 space-y-1 text-xs">
+            {calibrations.data.map((row) => (
+              <li key={row.id} className="flex flex-wrap items-center gap-x-2 text-slate-600">
+                <span className="font-mono text-slate-800">
+                  ×{row.scale} {row.offset >= 0 ? '+' : '−'}
+                  {Math.abs(row.offset)}
+                </span>
+                <span className="text-slate-400">·</span>
+                <span>{formatDateTime(row.effective_from)}</span>
+                <span className="text-slate-400">→</span>
+                {row.is_current ? (
+                  <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-800">
+                    berlaku
+                  </span>
+                ) : (
+                  <span>{formatDateTime(row.effective_to)}</span>
+                )}
+                {row.notes && <span className="w-full text-slate-500">{row.notes}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       {message && (
         <p
-          className={`lg:col-span-2 rounded-md px-3 py-2 text-sm ${
-            message.kind === 'ok'
-              ? 'bg-emerald-50 text-emerald-800'
-              : 'bg-red-50 text-red-800'
+          className={`rounded-md px-3 py-2 text-sm ${
+            message.kind === 'ok' ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'
           }`}
         >
           {message.text}

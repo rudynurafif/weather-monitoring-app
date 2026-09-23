@@ -128,10 +128,11 @@ Semua timestamp dalam **UTC**, format ISO 8601 dengan akhiran `Z`. Konversi ke W
 | Method | Path |
 |---|---|
 | GET / POST | `/api/v1/sensor-types` — pagination `page`, `per_page` (default 50) |
-| GET / POST | `/api/v1/sensors` |
+| GET / POST | `/api/v1/sensors` — filter `sensor_type`; pagination `page`, `per_page` |
 | PATCH / DELETE | `/api/v1/sensors/{id}` |
 | POST | `/api/v1/devices/{id}/sensors` — pasang sensor |
 | DELETE | `/api/v1/devices/{id}/sensors/{sensorId}` — lepas sensor |
+| GET | `/api/v1/sensors/{id}/installations` — riwayat pemasangan, termasuk yang sudah dilepas |
 | GET / POST | `/api/v1/sensors/{id}/calibrations` |
 
 ### Query — dipakai frontend
@@ -474,7 +475,48 @@ Menambah tipe sensor **tidak memerlukan perubahan skema sama sekali** — konsek
 
 `channel` membedakan dua sensor bertipe sama pada satu device — misalnya suhu dalam dan luar ruangan.
 
-### 6.3 Melepas sensor — `DELETE /api/v1/devices/{id}/sensors/{sensorId}`
+### 6.3 Riwayat pemasangan — `GET /api/v1/sensors/{id}/installations`
+
+Ketentuan B.2 meminta riwayat pemasangan terlacak. Endpoint ini yang membacanya kembali: setiap query lain di sistem menyaring pemasangan yang sedang berlaku saja, karena itulah yang mereka butuhkan.
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "1f0c…",
+      "device_id": "19eb…",
+      "device_code": "WS-BDG-002",
+      "device_name": "Stasiun Cuaca Lembang",
+      "sensor_type": "humidity",
+      "channel": 1,
+      "installed_at": "2026-06-01T00:00:00.000Z",
+      "removed_at": null,
+      "is_current": true,
+      "notes": null
+    },
+    {
+      "id": "8ab2…",
+      "device_code": "WS-GRT-001",
+      "channel": 0,
+      "installed_at": "2026-01-15T00:00:00.000Z",
+      "removed_at": "2026-06-01T00:00:00.000Z",
+      "is_current": false,
+      "notes": null
+    }
+  ]
+}
+```
+
+| Field | Arti |
+|---|---|
+| `installed_at` / `removed_at` | Batas masa pemasangan. `removed_at` `null` berarti masih terpasang |
+| `is_current` | Turunan dari `removed_at`, disediakan agar klien tidak perlu menafsirkan `null` |
+| `channel` | Membedakan dua sensor bertipe sama pada satu device |
+
+Inilah jawaban konkret pertanyaan desain Bagian B: sensor yang pindah dari device A ke device B pada 1 Juni tampak sebagai **dua baris dengan rentang bersambung**, bukan satu baris yang ditimpa. Pembacaan sebelum 1 Juni diresolusi memakai baris pertama, sehingga tetap terhubung ke device A selamanya.
+
+### 6.4 Melepas sensor — `DELETE /api/v1/devices/{id}/sensors/{sensorId}`
 
 ```json
 {
@@ -490,7 +532,7 @@ Menambah tipe sensor **tidak memerlukan perubahan skema sama sekali** — konsek
 
 Baris pemasangan **ditutup**, bukan dihapus. Data yang sudah tersimpan tetap menunjuk pemasangan itu.
 
-### 6.4 Kalibrasi — `POST /api/v1/sensors/{id}/calibrations`
+### 6.5 Kalibrasi — `POST /api/v1/sensors/{id}/calibrations`
 
 **Request:**
 

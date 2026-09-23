@@ -130,6 +130,214 @@
         "longitude": 107.615,
         "altitude_m": 900
       }
+    },
+    {
+      "device_code": "WS-MLG-010",
+      "name": "Stasiun Cuaca Malang Kota",
+      "key_id": "a1b2c3d4e5f60010",
+      "secret": "wsk_dev_mlg_seed_secret_0010",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Malang Kota",
+        "latitude": -7.9666,
+        "longitude": 112.6326,
+        "altitude_m": 505
+      }
+    },
+    {
+      "device_code": "WS-SBY-011",
+      "name": "Stasiun Cuaca Surabaya Pesisir",
+      "key_id": "a1b2c3d4e5f60011",
+      "secret": "wsk_dev_sby_seed_secret_0011",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Surabaya Pesisir",
+        "latitude": -7.2575,
+        "longitude": 112.7521,
+        "altitude_m": 5
+      }
+    },
+    {
+      "device_code": "WS-YOG-012",
+      "name": "Stasiun Cuaca Yogyakarta Kota",
+      "key_id": "a1b2c3d4e5f60012",
+      "secret": "wsk_dev_yog_seed_secret_0012",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Yogyakarta Kota",
+        "latitude": -7.7956,
+        "longitude": 110.3695,
+        "altitude_m": 113
+      }
+    },
+    {
+      "device_code": "WS-MRP-013",
+      "name": "Stasiun Cuaca Kaliurang Merapi",
+      "key_id": "a1b2c3d4e5f60013",
+      "secret": "wsk_dev_mrp_seed_secret_0013",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Kaliurang Merapi",
+        "latitude": -7.5975,
+        "longitude": 110.4262,
+        "altitude_m": 900
+      }
+    },
+    {
+      "device_code": "WS-SMG-014",
+      "name": "Stasiun Cuaca Semarang Pelabuhan",
+      "key_id": "a1b2c3d4e5f60014",
+      "secret": "wsk_dev_smg_seed_secret_0014",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Semarang Pelabuhan",
+        "latitude": -6.9667,
+        "longitude": 110.4167,
+        "altitude_m": 3
+      }
+    },
+    {
+      "device_code": "WS-SLO-015",
+      "name": "Stasiun Cuaca Surakarta",
+      "key_id": "a1b2c3d4e5f60015",
+      "secret": "wsk_dev_slo_seed_secret_0015",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Surakarta",
+        "latitude": -7.5755,
+        "longitude": 110.8243,
+        "altitude_m": 95
+      }
+    },
+    {
+      "device_code": "WS-DIE-016",
+      "name": "Stasiun Cuaca Dieng Wonosobo",
+      "key_id": "a1b2c3d4e5f60016",
+      "secret": "wsk_dev_die_seed_secret_0016",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Dieng Wonosobo",
+        "latitude": -7.2,
+        "longitude": 109.9,
+        "altitude_m": 2093
+      }
+    },
+    {
+      "device_code": "WS-PWT-017",
+      "name": "Stasiun Cuaca Purwokerto",
+      "key_id": "a1b2c3d4e5f60017",
+      "secret": "wsk_dev_pwt_seed_secret_0017",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Purwokerto",
+        "latitude": -7.4213,
+        "longitude": 109.2346,
+        "altitude_m": 109
+      }
+    },
+    {
+      "device_code": "WS-TGL-018",
+      "name": "Stasiun Cuaca Tegal Pantura",
+      "key_id": "a1b2c3d4e5f60018",
+      "secret": "wsk_dev_tgl_seed_secret_0018",
+      "status": "MAINTENANCE",
+      "location": {
+        "name": "Tegal Pantura",
+        "latitude": -6.8694,
+        "longitude": 109.1402,
+        "altitude_m": 4
+      }
+    },
+    {
+      "device_code": "WS-BJN-019",
+      "name": "Stasiun Cuaca Bojonegoro",
+      "key_id": "a1b2c3d4e5f60019",
+      "secret": "wsk_dev_bjn_seed_secret_0019",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Bojonegoro",
+        "latitude": -7.15,
+        "longitude": 111.88,
+        "altitude_m": 48
+      }
+    },
+    {
+      "device_code": "WS-JBR-020",
+      "name": "Stasiun Cuaca Jember",
+      "key_id": "a1b2c3d4e5f60020",
+      "secret": "wsk_dev_jbr_seed_secret_0020",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Jember",
+        "latitude": -8.1845,
+        "longitude": 113.6681,
+        "altitude_m": 89
+      }
+    },
+    {
+      "device_code": "WS-BWI-021",
+      "name": "Stasiun Cuaca Banyuwangi Ketapang",
+      "key_id": "a1b2c3d4e5f60021",
+      "secret": "wsk_dev_bwi_seed_secret_0021",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Banyuwangi Ketapang",
+        "latitude": -8.1445,
+        "longitude": 114.3695,
+        "altitude_m": 8
+      }
+    },
+    {
+      "device_code": "WS-BLI-022",
+      "name": "Stasiun Cuaca Bedugul Bali",
+      "key_id": "a1b2c3d4e5f60022",
+      "secret": "wsk_dev_bli_seed_secret_0022",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Bedugul Bali",
+        "latitude": -8.2757,
+        "longitude": 115.1668,
+        "altitude_m": 1240
+      }
+    },
+    {
+      "device_code": "WS-DPS-023",
+      "name": "Stasiun Cuaca Denpasar Pesisir",
+      "key_id": "a1b2c3d4e5f60023",
+      "secret": "wsk_dev_dps_seed_secret_0023",
+      "status": "ACTIVE",
+      "location": {
+        "name": "Denpasar Pesisir",
+        "latitude": -8.65,
+        "longitude": 115.2167,
+        "altitude_m": 4
+      }
+    },
+    {
+      "device_code": "WS-LOM-024",
+      "name": "Stasiun Cuaca Mataram Lombok",
+      "key_id": "a1b2c3d4e5f60024",
+      "secret": "wsk_dev_lom_seed_secret_0024",
+      "status": "PROVISIONED",
+      "location": {
+        "name": "Mataram Lombok",
+        "latitude": -8.5833,
+        "longitude": 116.1167,
+        "altitude_m": 16
+      }
+    },
+    {
+      "device_code": "WS-BRO-025",
+      "name": "Stasiun Cuaca Bromo Probolinggo",
+      "key_id": "a1b2c3d4e5f60025",
+      "secret": "wsk_dev_bro_seed_secret_0025",
+      "status": "PROVISIONED",
+      "location": {
+        "name": "Bromo Probolinggo",
+        "latitude": -7.9425,
+        "longitude": 112.953,
+        "altitude_m": 2217
+      }
     }
   ]
 }

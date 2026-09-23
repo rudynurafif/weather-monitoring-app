@@ -403,6 +403,53 @@ export class SensorsService {
   // Kalibrasi
   // -------------------------------------------------------------------
 
+  /**
+   * Riwayat pemasangan satu sensor: pernah terpasang di device mana saja, sejak
+   * kapan, dan sampai kapan.
+   *
+   * Ketentuan B.2 meminta riwayat ini terlacak, dan tabelnya memang sudah
+   * mencatatnya sejak awal — tetapi setiap query lain di sistem ini menyaring
+   * `removedAt: null` karena yang mereka butuhkan hanya pemasangan yang sedang
+   * berlaku. Akibatnya riwayatnya tersimpan tanpa pernah bisa dibaca kembali.
+   * Endpoint ini yang membukanya.
+   *
+   * Inilah jawaban konkret untuk pertanyaan desain Bagian B: sensor yang pindah
+   * dari device A ke device B pada 1 Juni akan tampak sebagai dua baris dengan
+   * rentang waktu yang bersambung, bukan satu baris yang ditimpa.
+   */
+  async listInstallations(sensorId: string) {
+    const sensor = await this.prisma.sensor.findFirst({
+      where: { id: sensorId, deletedAt: null },
+    });
+
+    if (!sensor) {
+      throw ApiException.notFound('Sensor', sensorId);
+    }
+
+    const rows = await this.prisma.sensorInstallation.findMany({
+      where: { sensorId },
+      orderBy: { installedAt: 'desc' },
+      include: {
+        device: { select: { id: true, deviceCode: true, name: true } },
+        sensorType: { select: { key: true } },
+      },
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      device_id: row.device.id,
+      device_code: row.device.deviceCode,
+      device_name: row.device.name,
+      sensor_type: row.sensorType.key,
+      channel: row.channel,
+      installed_at: row.installedAt.toISOString(),
+      // NULL berarti masih terpasang sampai sekarang.
+      removed_at: row.removedAt?.toISOString() ?? null,
+      is_current: row.removedAt === null,
+      notes: row.notes,
+    }));
+  }
+
   async listCalibrations(sensorId: string) {
     const rows = await this.prisma.sensorCalibration.findMany({
       where: { sensorId },
