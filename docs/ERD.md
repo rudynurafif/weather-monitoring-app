@@ -9,9 +9,9 @@ Skema yang benar-benar dieksekusi ada di [`apps/api/prisma/schema.prisma`](../ap
 
 ```mermaid
 erDiagram
-    location ||--o{ device : "menampung"
+    location |o--o{ device : "menampung"
     device   ||--|{ device_credential : "diautentikasi oleh"
-    device   ||--o{ device_status_history : "mencatat transisi"
+    device   ||--|{ device_status_history : "mencatat transisi"
     device   ||--o{ device_heartbeat : "melaporkan kesehatan"
     device   ||--o{ sensor_installation : "menjadi tempat pemasangan"
     device   ||--o{ sensor_reading : "menghasilkan"
@@ -24,14 +24,14 @@ erDiagram
 
     sensor ||--o{ sensor_installation : "dipasang lewat"
     sensor ||--o{ sensor_calibration : "dikoreksi oleh"
-    sensor ||--o{ sensor_reading : "menjadi sumber"
+    sensor |o--o{ sensor_reading : "menjadi sumber"
 
-    sensor_installation ||--o{ sensor_reading : "mengikat pembacaan ke sensor"
-    sensor_calibration  ||--o{ sensor_reading : "diterapkan pada"
+    sensor_installation |o--o{ sensor_reading : "mengikat pembacaan ke sensor"
+    sensor_calibration  |o--o{ sensor_reading : "diterapkan pada"
 
-    user ||--o{ device_status_history : "mengubah status"
-    user ||--o{ sensor_installation : "memasang"
-    user ||--o{ sensor_calibration : "mengkalibrasi"
+    user |o--o{ device_status_history : "mengubah status"
+    user |o--o{ sensor_installation : "memasang"
+    user |o--o{ sensor_calibration : "mengkalibrasi"
 
     location {
         uuid id PK
@@ -198,14 +198,16 @@ erDiagram
 
 | Relasi | Kardinalitas | Catatan |
 |---|---|---|
-| `location` → `device` | 1 — 0..N | Satu lokasi bisa menampung beberapa device, dan bisa kosong saat device-nya dicabut. |
+| `location` → `device` | 0..1 — 0..N | Satu lokasi bisa menampung beberapa device, dan bisa kosong saat device-nya dicabut. Sisi lokasi **0..1** karena `location_id` nullable: device boleh terdaftar sebelum lokasinya ditentukan. |
 | `device` → `device_credential` | 1 — 1..N | Selalu ada minimal satu kredensial; sementara ada lebih dari satu **aktif** hanya selama masa tenggang rotasi. |
 | `device` → `device_status_history` | 1 — 1..N | Baris pertama dibuat saat device didaftarkan (`NULL → PROVISIONED`). |
 | `sensor_type` → `sensor` | 1 — 0..N | Tipe adalah master data; sensor fisik adalah instansinya. |
 | **`device` ↔ `sensor`** | **N — M sepanjang waktu** | Tidak pernah dimodelkan sebagai relasi langsung. Dipecahkan oleh `sensor_installation` yang membawa dimensi waktu, sehingga pertanyaan "sensor apa yang ada di device ini" selalu berarti "…pada waktu kapan". |
 | `sensor` → `sensor_calibration` | 1 — 0..N | Berderet dalam waktu, tidak tumpang tindih (dijamin exclusion constraint). |
 | `device` → `sensor_reading` | 1 — 0..N | Relasi logis; **tanpa foreign key fisik** (lihat §4). |
-| `sensor_installation` → `sensor_reading` | 1 — 0..N | Hasil resolusi saat ingestion, disimpan agar tidak perlu dihitung ulang saat query. |
+| `sensor_installation` → `sensor_reading` | 0..1 — 0..N | Hasil resolusi saat ingestion, disimpan agar tidak perlu dihitung ulang saat query. **0..1** karena bisa tidak ada instalasi yang cocok pada `device_time`; pembacaannya tetap disimpan, tidak dibuang. Hal yang sama berlaku untuk `sensor_id`. |
+| `sensor_calibration` → `sensor_reading` | 0..1 — 0..N | Kalibrasi yang dipakai saat ingestion, untuk audit dan perhitungan ulang. NULL bila sensornya belum pernah dikalibrasi. |
+| `user` → `device_status_history`, `sensor_installation`, `sensor_calibration` | 0..1 — 0..N | Siapa yang melakukan perubahan. Nullable karena perubahan bisa berasal dari sistem (seeder, proses otomatis), dan `ON DELETE SET NULL` menjaga riwayatnya tetap utuh walau akun penggunanya dihapus. |
 
 ---
 

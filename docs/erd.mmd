@@ -1,14 +1,19 @@
 %% ===========================================================================
 %% ERD Platform Monitoring Stasiun Cuaca (sumber Mermaid)
-%%
+
 %% Ter-render otomatis di GitHub lewat ERD.md. Untuk melihatnya di luar GitHub,
 %% tempel isi file ini ke https://mermaid.live
-%%
-%% Catatan kardinalitas:
-%%   ||--o{  = satu ke nol-atau-banyak
-%%   ||--|{  = satu ke satu-atau-banyak
-%%   }o--||  = nol-atau-banyak ke satu
-%%
+
+%% Catatan kardinalitas. Simbol yang menempel pada sebuah tabel menyatakan
+%% berapa baris tabel ITU yang berpasangan dengan satu baris di seberangnya;
+%% simbol dalam = minimum, simbol luar = maksimum.
+%%   ||  = tepat satu          (FK NOT NULL)
+%%   |o  = nol atau satu       (FK nullable)
+%%   |{  = satu atau banyak
+%%   o{  = nol atau banyak
+%% Contoh: location |o--o{ device  -> satu device punya nol atau satu lokasi
+%% (location_id nullable), satu lokasi punya nol atau banyak device.
+
 %% Relasi device <-> sensor pada dasarnya N-M SEPANJANG WAKTU (satu sensor bisa
 %% singgah di banyak device, satu device menampung banyak sensor), dan
 %% dipecahkan oleh tabel penghubung sensor_installation yang membawa dimensi
@@ -16,9 +21,9 @@
 %% ===========================================================================
 
 erDiagram
-    location ||--o{ device : "menampung"
+    location |o--o{ device : "menampung"
     device   ||--|{ device_credential : "diautentikasi oleh"
-    device   ||--o{ device_status_history : "mencatat transisi"
+    device   ||--|{ device_status_history : "mencatat transisi"
     device   ||--o{ device_heartbeat : "melaporkan kesehatan"
     device   ||--o{ sensor_installation : "menjadi tempat pemasangan"
     device   ||--o{ sensor_reading : "menghasilkan"
@@ -31,14 +36,14 @@ erDiagram
 
     sensor ||--o{ sensor_installation : "dipasang lewat"
     sensor ||--o{ sensor_calibration : "dikoreksi oleh"
-    sensor ||--o{ sensor_reading : "menjadi sumber"
+    sensor |o--o{ sensor_reading : "menjadi sumber"
 
-    sensor_installation ||--o{ sensor_reading : "mengikat pembacaan ke sensor"
-    sensor_calibration  ||--o{ sensor_reading : "diterapkan pada"
+    sensor_installation |o--o{ sensor_reading : "mengikat pembacaan ke sensor"
+    sensor_calibration  |o--o{ sensor_reading : "diterapkan pada"
 
-    user ||--o{ device_status_history : "mengubah status"
-    user ||--o{ sensor_installation : "memasang"
-    user ||--o{ sensor_calibration : "mengkalibrasi"
+    user |o--o{ device_status_history : "mengubah status"
+    user |o--o{ sensor_installation : "memasang"
+    user |o--o{ sensor_calibration : "mengkalibrasi"
 
     location {
         uuid id PK
