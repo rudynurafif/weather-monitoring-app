@@ -53,9 +53,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
       } else if (typeof body === 'object' && body !== null && 'message' in body) {
         // Dilempar oleh ValidationPipe bawaan Nest.
         const typed = body as { message: string | string[] };
-        code = status === HttpStatus.BAD_REQUEST
-          ? ErrorCode.VALIDATION_FAILED
-          : this.statusToCode(status);
+        code =
+          status === HttpStatus.BAD_REQUEST || status === HttpStatus.UNPROCESSABLE_ENTITY
+            ? ErrorCode.VALIDATION_FAILED
+            : this.statusToCode(status);
         const messages = Array.isArray(typed.message) ? typed.message : [typed.message];
         message = messages[0] ?? 'Request tidak valid';
         details = messages.map((m) => ({
@@ -92,6 +93,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
         return ErrorCode.NOT_FOUND;
       case HttpStatus.CONFLICT:
         return ErrorCode.ALREADY_EXISTS;
+      case HttpStatus.UNPROCESSABLE_ENTITY:
+        return ErrorCode.VALIDATION_FAILED;
+      case HttpStatus.PAYLOAD_TOO_LARGE:
+        return ErrorCode.BATCH_TOO_LARGE;
       case HttpStatus.TOO_MANY_REQUESTS:
         return ErrorCode.RATE_LIMIT_EXCEEDED;
       case HttpStatus.SERVICE_UNAVAILABLE:

@@ -4,6 +4,7 @@ import { CredentialStatus, DeviceStatus, Prisma } from '@prisma/client';
 import { generateCredential } from '../auth/device-key.util';
 import { ApiException } from '../common/errors/api.exception';
 import { ErrorCode } from '../common/errors/error-codes';
+import { LocationsService } from '../locations/locations.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateDeviceDto, ListDevicesDto, UpdateDeviceDto } from './dto/device.dto';
 
@@ -54,15 +55,39 @@ export class DevicesService {
       );
     }
 
+    // Dua cara menentukan lokasi saling meniadakan. Menerima keduanya sekaligus
+    // berarti harus memutuskan mana yang menang — keputusan yang tidak bisa
+    // ditebak pemanggil, dan cepat atau lambat menghasilkan device yang
+    // lokasinya bukan yang dimaksud operator.
+    if (dto.location_id && dto.location) {
+      throw ApiException.validation(
+        'Isi salah satu saja: location_id untuk lokasi yang sudah ada, atau location untuk membuat lokasi baru',
+        [
+          {
+            field: 'location',
+            code: 'MUTUALLY_EXCLUSIVE',
+            message: 'Tidak boleh diisi bersamaan dengan location_id',
+          },
+        ],
+      );
+    }
+
     const pepper = this.config.get<string>('deviceKeyPepper') ?? '';
     const credential = generateCredential(pepper);
 
     const device = await this.prisma.$transaction(async (tx) => {
+      // Lokasi baru dibuat di dalam transaksi yang sama, sehingga device dan
+      // lokasinya lahir atau gagal bersama. Tidak mungkin ada lokasi yatim
+      // yang terlanjur tersimpan ketika pembuatan device-nya gagal.
+      const locationId = dto.location
+        ? (await LocationsService.createWithin(tx, dto.location)).id
+        : (dto.location_id ?? null);
+
       const created = await tx.device.create({
         data: {
           deviceCode: dto.device_code,
           name: dto.name,
-          locationId: dto.location_id ?? null,
+          locationId,
           firmwareVersion: dto.firmware_version ?? null,
           status: DeviceStatus.PROVISIONED,
         },

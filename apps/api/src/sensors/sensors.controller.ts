@@ -31,8 +31,11 @@ export class SensorsController {
 
   @Get('sensor-types')
   @ApiOperation({ summary: 'Daftar tipe sensor beserta satuan dan rentang validnya' })
-  listSensorTypes() {
-    return this.sensors.listSensorTypes();
+  listSensorTypes(@Query('page') page?: string, @Query('per_page') perPage?: string) {
+    return this.sensors.listSensorTypes(
+      Math.max(1, Number.parseInt(page ?? '1', 10) || 1),
+      Math.min(200, Math.max(1, Number.parseInt(perPage ?? '50', 10) || 50)),
+    );
   }
 
   @Post('sensor-types')

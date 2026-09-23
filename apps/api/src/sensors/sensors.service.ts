@@ -24,9 +24,35 @@ export class SensorsService {
   // Tipe sensor (master data)
   // -------------------------------------------------------------------
 
-  async listSensorTypes() {
-    const rows = await this.prisma.sensorType.findMany({ orderBy: { key: 'asc' } });
-    return rows.map(serializeSensorType);
+  /**
+   * Daftar tipe sensor.
+   *
+   * Master data ini kecil dan jarang berubah, tetapi tetap dipaginasi supaya
+   * bentuk response-nya sama dengan endpoint list lain. `per_page` default 50
+   * sudah memuat seluruh tipe yang ada, jadi klien biasa tidak perlu memaginasi
+   * apa pun; yang penting kontraknya tidak bercabang.
+   */
+  async listSensorTypes(page: number, perPage: number) {
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.sensorType.count(),
+      this.prisma.sensorType.findMany({
+        orderBy: { key: 'asc' },
+        skip: (page - 1) * perPage,
+        take: perPage,
+      }),
+    ]);
+
+    return {
+      data: rows.map(serializeSensorType),
+      meta: {
+        pagination: {
+          page,
+          per_page: perPage,
+          total,
+          total_pages: Math.ceil(total / perPage) || 1,
+        },
+      },
+    };
   }
 
   async createSensorType(dto: CreateSensorTypeDto) {

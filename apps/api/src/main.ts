@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { HttpStatus, Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
@@ -25,6 +25,10 @@ async function bootstrap(): Promise<void> {
       forbidNonWhitelisted: false, // device boleh menambah field baru tanpa memecah ingestion
       transform: true,             // ubah payload mentah jadi instance DTO
       transformOptions: { enableImplicitConversion: false },
+      // Default Nest adalah 400. Disamakan menjadi 422 supaya SELURUH kegagalan
+      // validasi punya status yang sama, baik yang ditangkap dekorator DTO
+      // maupun yang diperiksa service. Klien cukup menangani satu status.
+      errorHttpStatusCode: HttpStatus.UNPROCESSABLE_ENTITY,
     }),
   );
 

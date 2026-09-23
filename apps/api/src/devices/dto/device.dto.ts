@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DeviceStatus } from '@prisma/client';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
   IsInt,
@@ -11,7 +11,9 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { CreateLocationDto } from '../../locations/dto/location.dto';
 
 export class CreateDeviceDto {
   @ApiProperty({ example: 'WS-GRT-004' })
@@ -29,10 +31,38 @@ export class CreateDeviceDto {
   @MaxLength(120)
   name!: string;
 
-  @ApiPropertyOptional({ description: 'UUID lokasi yang sudah terdaftar.' })
+  /**
+   * Lokasi device ditentukan lewat SALAH SATU dari dua field berikut.
+   *
+   * Dua jalan disediakan karena dua keadaan lapangan yang sama-sama nyata:
+   *
+   *  - Stasiun baru di tempat baru — operator mengisi koordinat dan ketinggian
+   *    langsung di form yang sama. Memaksanya membuat lokasi lebih dulu di
+   *    halaman terpisah hanya menambah langkah tanpa menambah ketelitian.
+   *  - Perangkat pengganti di tiang yang sama — operator memilih lokasi yang
+   *    sudah ada. Ini justru kasus yang paling penting: data lama dan data baru
+   *    harus menunjuk satu lokasi yang sama agar perbandingan antar tahun di
+   *    situs itu tetap sahih.
+   */
+  @ApiPropertyOptional({
+    description:
+      'UUID lokasi yang sudah terdaftar. Pakai ini saat memasang perangkat pengganti ' +
+      'di lokasi yang sudah ada. Tidak boleh diisi bersamaan dengan `location`.',
+  })
   @IsOptional()
   @IsUUID()
   location_id?: string;
+
+  @ApiPropertyOptional({
+    type: CreateLocationDto,
+    description:
+      'Lokasi baru yang dibuat sekaligus dengan device-nya, dalam satu transaksi. ' +
+      'Tidak boleh diisi bersamaan dengan `location_id`.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateLocationDto)
+  location?: CreateLocationDto;
 
   @ApiPropertyOptional({ example: '1.4.2' })
   @IsOptional()

@@ -6,6 +6,7 @@ import { HealthController } from './health/health.controller';
 import { AggregationModule } from './aggregation/aggregation.module';
 import { DevicesModule } from './devices/devices.module';
 import { IngestionModule } from './ingestion/ingestion.module';
+import { LocationsModule } from './locations/locations.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReadingsModule } from './readings/readings.module';
 import { SensorsModule } from './sensors/sensors.module';
@@ -27,6 +28,7 @@ import { SensorsModule } from './sensors/sensors.module';
     ReadingsModule,
     DevicesModule,
     SensorsModule,
+    LocationsModule,
   ],
   controllers: [HealthController],
 })

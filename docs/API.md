@@ -7,7 +7,7 @@ Berkas ini memuat kontrak JSON lengkap yang diminta Bagian F beserta penjelasan 
 
 ## 1. Ketentuan umum
 
-### Envelope response
+### Envelope response (F.2.5 — format error standar)
 
 Setiap response — sukses maupun gagal — memakai bentuk yang sama, sehingga klien cukup memeriksa satu field (`success`) untuk bercabang.
 
@@ -64,7 +64,7 @@ Semua timestamp dalam **UTC**, format ISO 8601 dengan akhiran `Z`. Konversi ke W
 | Device (endpoint `/ingest/*`) | `X-Device-Key: <key_id>.<secret>` |
 | User dashboard | `Authorization: Bearer <jwt>` — **belum diberlakukan**, lihat catatan di README |
 
-### Kode error
+### Kode error (F.2.5 — daftar `code` yang machine-readable)
 
 | Kode | HTTP | Kapan |
 |---|---|---|
@@ -79,7 +79,8 @@ Semua timestamp dalam **UTC**, format ISO 8601 dengan akhiran `Z`. Konversi ke W
 | `DEVICE_NOT_ACTIVE` | 403 | Device berstatus `DECOMMISSIONED` |
 | `DEVICE_MISMATCH` | 403 | `device_id` di payload bukan milik kredensial yang dipakai |
 | `NOT_FOUND` | 404 | Resource tidak ada |
-| `ALREADY_EXISTS` | 409 | Kode device atau nomor seri sudah dipakai |
+| `ALREADY_EXISTS` | 409 | Kode device, nomor seri, atau nama lokasi sudah dipakai |
+| `RESOURCE_IN_USE` | 409 | Resource tidak bisa dihapus karena masih direferensikan (mis. lokasi yang masih dipakai device) |
 | `INVALID_STATUS_TRANSITION` | 409 | Perpindahan status tidak diizinkan |
 | `SENSOR_ALREADY_INSTALLED` | 409 | Sensor masih terpasang, atau slot sudah terisi |
 | `SENSOR_NOT_INSTALLED` | 404 | Sensor tidak sedang terpasang di device tersebut |
@@ -112,11 +113,21 @@ Semua timestamp dalam **UTC**, format ISO 8601 dengan akhiran `Z`. Konversi ke W
 | POST | `/api/v1/devices/{id}/credentials/rotate` |
 | GET | `/api/v1/devices/{id}/health` |
 
+### Location management
+
+| Method | Path |
+|---|---|
+| GET | `/api/v1/locations` — daftar lokasi beserta jumlah device di masing-masing; pagination `page`, `per_page` (default 50), filter `q` |
+| GET | `/api/v1/locations/{id}` |
+| POST | `/api/v1/locations` |
+| PATCH | `/api/v1/locations/{id}` |
+| DELETE | `/api/v1/locations/{id}` — ditolak selama masih dipakai device |
+
 ### Sensor management
 
 | Method | Path |
 |---|---|
-| GET / POST | `/api/v1/sensor-types` |
+| GET / POST | `/api/v1/sensor-types` — pagination `page`, `per_page` (default 50) |
 | GET / POST | `/api/v1/sensors` |
 | PATCH / DELETE | `/api/v1/sensors/{id}` |
 | POST | `/api/v1/devices/{id}/sensors` — pasang sensor |
@@ -267,14 +278,32 @@ Kedua waktu dikembalikan supaya device bisa **mengoreksi jamnya sendiri** dengan
 
 ### 5.1 Membuat device — `POST /api/v1/devices`
 
-**Request:**
+Ketentuan Bagian A.1 menyebut pendaftaran stasiun mencakup **identitas beserta lokasinya (koordinat, nama lokasi, ketinggian)**. Karena itu endpoint ini menerima lokasi lewat salah satu dari dua cara, dan **tidak boleh keduanya sekaligus**.
+
+**Cara 1 — lokasi baru, dibuat sekaligus dengan device-nya:**
 
 ```json
 {
   "device_code": "WS-GRT-004",
   "name": "Stasiun Cuaca Garut Selatan",
-  "location_id": "3f1a...",
-  "firmware_version": "1.4.2"
+  "firmware_version": "1.4.2",
+  "location": {
+    "name": "Garut Selatan",
+    "latitude": -7.214,
+    "longitude": 107.9,
+    "altitude_m": 717,
+    "description": "Halaman kantor BPP Kecamatan"
+  }
+}
+```
+
+**Cara 2 — perangkat pengganti di lokasi yang sudah ada:**
+
+```json
+{
+  "device_code": "WS-GRT-004B",
+  "name": "Stasiun Cuaca Garut Selatan (pengganti)",
+  "location_id": "3f1a2b4c-..."
 }
 ```
 
@@ -282,8 +311,16 @@ Kedua waktu dikembalikan supaya device bisa **mengoreksi jamnya sendiri** dengan
 |---|---|---|
 | `device_code` | ya | Huruf kapital, angka, tanda hubung. Inilah nilai yang dikirim device di payload |
 | `name` | ya | Nama yang dibaca manusia |
-| `location_id` | tidak | UUID lokasi yang sudah terdaftar |
+| `location` | salah satu | Lokasi baru. Dibuat dalam transaksi yang sama dengan device-nya, sehingga tidak mungkin ada lokasi yatim bila pembuatan device gagal |
+| `location.latitude` | ya | Derajat desimal, −90 sampai 90. Negatif = belahan selatan |
+| `location.longitude` | ya | Derajat desimal, −180 sampai 180. Positif = belahan timur |
+| `location.altitude_m` | ya | Meter di atas permukaan laut. Dipakai menafsirkan tekanan udara dan suhu |
+| `location_id` | salah satu | UUID lokasi yang sudah terdaftar |
 | `firmware_version` | tidak | Diperbarui sendiri saat device mulai mengirim |
+
+**Kenapa dua cara, bukan satu.** Keduanya mewakili keadaan lapangan yang sama-sama nyata. Stasiun baru di tempat baru: operator mengisi koordinat langsung, dan memaksanya membuat lokasi lebih dulu di halaman terpisah hanya menambah langkah tanpa menambah ketelitian. Perangkat pengganti di tiang yang sama: operator memilih lokasi yang sudah ada — dan ini justru yang paling penting, karena data lama dan data baru harus menunjuk satu lokasi yang sama agar perbandingan antar tahun di situs itu tetap sahih.
+
+Mengirim keduanya sekaligus dijawab `422 VALIDATION_FAILED` dengan detail `MUTUALLY_EXCLUSIVE`. Menerima keduanya berarti server harus memutuskan mana yang menang — keputusan yang tidak bisa ditebak pemanggil.
 
 **Response `201 Created`:**
 
@@ -334,6 +371,10 @@ Kedua waktu dikembalikan supaya device bisa **mengoreksi jamnya sendiri** dengan
 ```
 
 Info pagination diletakkan di `meta`, bukan di `data`, supaya `data` selalu berupa array murni dan klien tidak perlu membongkar bentuk yang berbeda-beda per endpoint.
+
+**Seluruh** endpoint list mengirim `meta.pagination`, termasuk yang datanya kecil seperti `/locations` dan `/sensor-types`. Keduanya memang hanya berisi puluhan baris dan `per_page` default-nya 50 — cukup untuk memuat satu dropdown dalam sekali permintaan — tetapi kontraknya sengaja tidak dibuat bercabang: klien tidak perlu menghafal endpoint mana yang punya pagination dan mana yang tidak. Time-series adalah satu-satunya pengecualian, dan alasannya dijelaskan di [§7](#7-response-time-series-f24).
+
+Untuk endpoint list dengan data kecil, pemaginasian juga menjaga satu hal lain: kalau kelak jumlah lokasi bertambah jauh melebihi perkiraan, response-nya tidak berubah bentuk dan tidak ada klien yang rusak — hanya `total_pages` yang naik.
 
 ### 5.3 Detail device — `GET /api/v1/devices/{id}`
 

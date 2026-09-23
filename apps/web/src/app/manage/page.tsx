@@ -12,13 +12,29 @@ interface DeviceListItem {
   device_code: string;
   name: string;
   status: string;
-  location: { name: string } | null;
+  firmware_version: string | null;
+  location: { id: string; name: string } | null;
   last_seen_at: string | null;
+}
+
+interface RotatedCredential {
+  key_id: string;
+  device_key: string;
+  previous_credentials_valid_until: string;
 }
 
 interface PaginatedDevices {
   rows: DeviceListItem[];
   pagination: { page: number; per_page: number; total: number; total_pages: number };
+}
+
+interface LocationOption {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  altitude_m: number;
+  device_count: number;
 }
 
 interface SensorListItem {
@@ -70,6 +86,7 @@ function DevicesPanel() {
   const [status, setStatus] = useState('');
   const [q, setQ] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<DeviceListItem | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
   const devices = useApi<PaginatedDevices>(
@@ -122,7 +139,10 @@ function DevicesPanel() {
 
         <button
           type="button"
-          onClick={() => setShowForm((value) => !value)}
+          onClick={() => {
+            setShowForm((value) => !value);
+            setEditing(null);
+          }}
           className="ml-auto rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800"
         >
           {showForm ? 'Tutup form' : 'Tambah device'}
@@ -134,6 +154,17 @@ function DevicesPanel() {
           onCreated={() => {
             setReloadToken((value) => value + 1);
           }}
+        />
+      )}
+
+      {editing && (
+        <EditDeviceForm
+          key={editing.id}
+          device={editing}
+          onSaved={() => {
+            setReloadToken((value) => value + 1);
+          }}
+          onClose={() => setEditing(null)}
         />
       )}
 
@@ -179,13 +210,25 @@ function DevicesPanel() {
                     <td className="px-4 py-3 text-xs text-slate-500">
                       {formatDateTime(device.last_seen_at)}
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        href={`/devices/${device.id}`}
-                        className="text-xs font-medium text-slate-700 hover:text-slate-900"
-                      >
-                        Lihat →
-                      </Link>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditing(device);
+                            setShowForm(false);
+                          }}
+                          className="text-xs font-medium text-slate-600 hover:text-slate-900"
+                        >
+                          Ubah
+                        </button>
+                        <Link
+                          href={`/devices/${device.id}`}
+                          className="text-xs font-medium text-slate-700 hover:text-slate-900"
+                        >
+                          Lihat →
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -226,9 +269,30 @@ function DevicesPanel() {
 function CreateDeviceForm({ onCreated }: { onCreated: () => void }) {
   const [deviceCode, setDeviceCode] = useState('');
   const [name, setName] = useState('');
+  const [firmware, setFirmware] = useState('');
+
+  /**
+   * Dua cara menentukan lokasi, sesuai dua keadaan lapangan yang sama-sama
+   * nyata: stasiun baru di tempat baru, dan perangkat pengganti di tiang yang
+   * sama. Yang kedua justru yang paling penting — data lama dan data baru harus
+   * menunjuk satu lokasi yang sama agar perbandingan antar tahun tetap sahih.
+   */
+  const [locationMode, setLocationMode] = useState<'new' | 'existing'>('new');
+  const [locationId, setLocationId] = useState('');
+  const [locName, setLocName] = useState('');
+  const [latitude, setLatitude] = useState('');
+  const [longitude, setLongitude] = useState('');
+  const [altitude, setAltitude] = useState('');
+  const [locDescription, setLocDescription] = useState('');
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [credential, setCredential] = useState<string | null>(null);
+
+  const locations = useApi<LocationOption[]>(
+    async () => (await apiFetch<LocationOption[]>('/locations')).data,
+    [],
+  );
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -236,14 +300,40 @@ function CreateDeviceForm({ onCreated }: { onCreated: () => void }) {
     setError(null);
 
     try {
+      const payload: Record<string, unknown> = {
+        device_code: deviceCode,
+        name,
+        ...(firmware ? { firmware_version: firmware } : {}),
+      };
+
+      // Hanya SATU dari keduanya yang dikirim; backend menolak bila keduanya ada.
+      if (locationMode === 'existing') {
+        payload.location_id = locationId;
+      } else {
+        payload.location = {
+          name: locName,
+          latitude: Number(latitude),
+          longitude: Number(longitude),
+          altitude_m: Number(altitude),
+          ...(locDescription ? { description: locDescription } : {}),
+        };
+      }
+
       const result = await apiFetch<DeviceDetail & { credential: { device_key: string } }>(
         '/devices',
-        { method: 'POST', body: JSON.stringify({ device_code: deviceCode, name }) },
+        { method: 'POST', body: JSON.stringify(payload) },
       );
 
       setCredential(result.data.credential.device_key);
       setDeviceCode('');
       setName('');
+      setFirmware('');
+      setLocName('');
+      setLatitude('');
+      setLongitude('');
+      setAltitude('');
+      setLocDescription('');
+      locations.refresh();
       onCreated();
     } catch (caught) {
       setError(caught instanceof ApiError ? caught : new ApiError('UNKNOWN', 'Gagal', 0));
@@ -252,36 +342,189 @@ function CreateDeviceForm({ onCreated }: { onCreated: () => void }) {
     }
   }
 
+  const inputClass = 'w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm';
+
   return (
-    <form onSubmit={submit} className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+    <form onSubmit={submit} className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
       <h2 className="text-sm font-semibold text-slate-900">Daftarkan Device Baru</h2>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      {/* --- Identitas device --- */}
+      <div className="grid gap-3 sm:grid-cols-3">
         <label className="text-sm">
-          <span className="mb-1 block text-xs font-medium text-slate-600">Kode device</span>
+          <span className="mb-1 block text-xs font-medium text-slate-600">Kode device *</span>
           <input
             required
             value={deviceCode}
             onChange={(event) => setDeviceCode(event.target.value.toUpperCase())}
-            placeholder="WS-GRT-004"
-            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            placeholder="WS-GRT-010"
+            className={inputClass}
           />
           <span className="mt-1 block text-xs text-slate-400">
-            Huruf kapital, angka, dan tanda hubung.
+            Huruf kapital, angka, dan tanda hubung. Nilai inilah yang dikirim device di payload.
           </span>
         </label>
 
         <label className="text-sm">
-          <span className="mb-1 block text-xs font-medium text-slate-600">Nama</span>
+          <span className="mb-1 block text-xs font-medium text-slate-600">Nama stasiun *</span>
           <input
             required
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="Stasiun Cuaca Garut Selatan"
-            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            className={inputClass}
           />
         </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Versi firmware</span>
+          <input
+            value={firmware}
+            onChange={(event) => setFirmware(event.target.value)}
+            placeholder="1.4.2"
+            className={inputClass}
+          />
+          <span className="mt-1 block text-xs text-slate-400">
+            Opsional. Diperbarui sendiri saat device mulai mengirim.
+          </span>
+        </label>
       </div>
+
+      {/* --- Lokasi (ketentuan Bagian A.1: koordinat, nama lokasi, ketinggian) --- */}
+      <fieldset className="rounded-md border border-slate-200 p-3">
+        <legend className="px-1 text-xs font-semibold text-slate-700">Lokasi pemasangan</legend>
+
+        <div className="mb-3 flex flex-wrap gap-4 text-sm">
+          {(
+            [
+              ['new', 'Lokasi baru'],
+              ['existing', 'Pilih lokasi yang sudah ada'],
+            ] as const
+          ).map(([value, label]) => (
+            <label key={value} className="flex items-center gap-1.5">
+              <input
+                type="radio"
+                name="location-mode"
+                checked={locationMode === value}
+                onChange={() => setLocationMode(value)}
+              />
+              <span className="text-slate-700">{label}</span>
+            </label>
+          ))}
+        </div>
+
+        {locationMode === 'existing' ? (
+          <div className="space-y-2">
+            {locations.isLoading && <p className="text-xs text-slate-500">Memuat lokasi...</p>}
+
+            {locations.error && (
+              <p className="text-xs text-red-700">Gagal memuat lokasi ({locations.error.code}).</p>
+            )}
+
+            {locations.data && locations.data.length === 0 && (
+              <p className="text-xs text-slate-500">
+                Belum ada lokasi terdaftar. Pakai pilihan &quot;Lokasi baru&quot;.
+              </p>
+            )}
+
+            {locations.data && locations.data.length > 0 && (
+              <label className="block text-sm">
+                <span className="mb-1 block text-xs font-medium text-slate-600">Lokasi *</span>
+                <select
+                  required
+                  value={locationId}
+                  onChange={(event) => setLocationId(event.target.value)}
+                  className={inputClass}
+                >
+                  <option value="">Pilih lokasi</option>
+                  {locations.data.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name} — {location.altitude_m} mdpl ({location.device_count} device)
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-1 block text-xs text-slate-400">
+                  Dipakai saat memasang perangkat pengganti di lokasi yang sama.
+                </span>
+              </label>
+            )}
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-sm lg:col-span-2">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Nama lokasi *</span>
+              <input
+                required
+                value={locName}
+                onChange={(event) => setLocName(event.target.value)}
+                placeholder="Garut Selatan"
+                className={inputClass}
+              />
+            </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Lintang *</span>
+              <input
+                required
+                type="number"
+                step="any"
+                min={-90}
+                max={90}
+                value={latitude}
+                onChange={(event) => setLatitude(event.target.value)}
+                placeholder="-7.214"
+                className={inputClass}
+              />
+              <span className="mt-1 block text-xs text-slate-400">Negatif = belahan selatan.</span>
+            </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Bujur *</span>
+              <input
+                required
+                type="number"
+                step="any"
+                min={-180}
+                max={180}
+                value={longitude}
+                onChange={(event) => setLongitude(event.target.value)}
+                placeholder="107.900"
+                className={inputClass}
+              />
+              <span className="mt-1 block text-xs text-slate-400">Positif = belahan timur.</span>
+            </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-medium text-slate-600">
+                Ketinggian (mdpl) *
+              </span>
+              <input
+                required
+                type="number"
+                step="any"
+                min={-500}
+                max={9000}
+                value={altitude}
+                onChange={(event) => setAltitude(event.target.value)}
+                placeholder="717"
+                className={inputClass}
+              />
+              <span className="mt-1 block text-xs text-slate-400">
+                Dipakai menafsirkan tekanan udara dan suhu.
+              </span>
+            </label>
+
+            <label className="text-sm lg:col-span-3">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Keterangan</span>
+              <input
+                value={locDescription}
+                onChange={(event) => setLocDescription(event.target.value)}
+                placeholder="Halaman kantor BPP Kecamatan"
+                className={inputClass}
+              />
+            </label>
+          </div>
+        )}
+      </fieldset>
 
       {error && (
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
@@ -307,6 +550,283 @@ function CreateDeviceForm({ onCreated }: { onCreated: () => void }) {
       >
         {submitting ? 'Menyimpan...' : 'Simpan'}
       </button>
+    </form>
+  );
+}
+
+/**
+ * Transisi status yang diizinkan, dicerminkan dari backend.
+ *
+ * Duplikasi ini sengaja: tujuannya supaya pengguna tidak ditawari pilihan yang
+ * sudah pasti ditolak. Yang berwenang tetap backend — kalau daftar ini
+ * ketinggalan, servernya yang menolak dengan `INVALID_STATUS_TRANSITION`, dan
+ * pesannya ditampilkan apa adanya di bawah form.
+ */
+const ALLOWED_TRANSITIONS: Record<string, string[]> = {
+  PROVISIONED: ['ACTIVE', 'MAINTENANCE', 'DECOMMISSIONED'],
+  ACTIVE: ['MAINTENANCE', 'DECOMMISSIONED'],
+  MAINTENANCE: ['ACTIVE', 'DECOMMISSIONED'],
+  DECOMMISSIONED: [],
+};
+
+function EditDeviceForm({
+  device,
+  onSaved,
+  onClose,
+}: {
+  device: DeviceListItem;
+  onSaved: () => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(device.name);
+  const [firmware, setFirmware] = useState(device.firmware_version ?? '');
+  const [locationId, setLocationId] = useState(device.location?.id ?? '');
+  const [status, setStatus] = useState(device.status);
+  const [statusReason, setStatusReason] = useState('');
+
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [rotated, setRotated] = useState<RotatedCredential | null>(null);
+
+  const locations = useApi<LocationOption[]>(
+    async () => (await apiFetch<LocationOption[]>('/locations')).data,
+    [],
+  );
+
+  const statusChanged = status !== device.status;
+  const statusOptions = [device.status, ...(ALLOWED_TRANSITIONS[device.status] ?? [])];
+
+  /** Satu pembungkus untuk ketiga aksi, supaya penanganan error-nya seragam. */
+  async function run(action: () => Promise<void>) {
+    setSubmitting(true);
+    setError(null);
+    setSaved(false);
+
+    try {
+      await action();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught : new ApiError('UNKNOWN', 'Gagal', 0));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+
+    await run(async () => {
+      // Hanya kirim field yang benar-benar berubah. PATCH berarti perubahan
+      // sebagian: mengirim ulang nilai yang sama akan mencatat riwayat status
+      // palsu dan menimpa perubahan orang lain tanpa alasan.
+      const payload: Record<string, unknown> = {};
+      if (name !== device.name) payload.name = name;
+      if (firmware !== (device.firmware_version ?? '')) payload.firmware_version = firmware;
+      if (locationId !== (device.location?.id ?? '')) payload.location_id = locationId;
+
+      if (statusChanged) {
+        payload.status = status;
+        if (statusReason) payload.status_reason = statusReason;
+      }
+
+      if (Object.keys(payload).length === 0) {
+        setSaved(true);
+        return;
+      }
+
+      await apiFetch(`/devices/${device.id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+      setSaved(true);
+      setStatusReason('');
+      onSaved();
+    });
+  }
+
+  async function rotate() {
+    await run(async () => {
+      const result = await apiFetch<RotatedCredential>(`/devices/${device.id}/credentials/rotate`, {
+        method: 'POST',
+      });
+      setRotated(result.data);
+    });
+  }
+
+  async function softDelete() {
+    // Konfirmasi karena aksinya mencabut kredensial device dan menghentikan
+    // pengirimannya. Barisnya sendiri tidak hilang — pembacaan historisnya
+    // tetap utuh dan tetap bisa di-query.
+    const confirmed = window.confirm(
+      `Hapus ${device.device_code}?\n\n` +
+        'Device ditandai DECOMMISSIONED dan kredensialnya dicabut, sehingga ia tidak ' +
+        'bisa lagi mengirim data. Seluruh data historisnya tetap disimpan.',
+    );
+
+    if (!confirmed) return;
+
+    await run(async () => {
+      await apiFetch(`/devices/${device.id}`, { method: 'DELETE' });
+      onSaved();
+      onClose();
+    });
+  }
+
+  const inputClass = 'w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm';
+
+  return (
+    <form
+      onSubmit={save}
+      className="space-y-4 rounded-lg border border-slate-300 bg-white p-4 ring-1 ring-slate-900/5"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">
+            Ubah Device <span className="font-mono text-xs text-slate-500">{device.device_code}</span>
+          </h2>
+          <p className="text-xs text-slate-500">
+            Kode device tidak bisa diubah — ia dipakai firmware sebagai identitas di setiap payload.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+        >
+          Tutup
+        </button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Nama stasiun</span>
+          <input value={name} onChange={(event) => setName(event.target.value)} className={inputClass} />
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Versi firmware</span>
+          <input
+            value={firmware}
+            onChange={(event) => setFirmware(event.target.value)}
+            placeholder="1.4.2"
+            className={inputClass}
+          />
+          <span className="mt-1 block text-xs text-slate-400">
+            Biasanya terisi sendiri dari payload device.
+          </span>
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Lokasi</span>
+          <select
+            value={locationId}
+            onChange={(event) => setLocationId(event.target.value)}
+            className={inputClass}
+          >
+            <option value="">— tanpa lokasi —</option>
+            {locations.data?.map((location) => (
+              <option key={location.id} value={location.id}>
+                {location.name} — {location.altitude_m} mdpl
+              </option>
+            ))}
+          </select>
+          {locations.error && (
+            <span className="mt-1 block text-xs text-red-700">Gagal memuat daftar lokasi.</span>
+          )}
+        </label>
+
+        <label className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">Status</span>
+          <select
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+            className={inputClass}
+          >
+            {statusOptions.map((value) => (
+              <option key={value} value={value}>
+                {value}
+                {value === device.status ? ' (sekarang)' : ''}
+              </option>
+            ))}
+          </select>
+          <span className="mt-1 block text-xs text-slate-400">
+            {device.status === 'DECOMMISSIONED'
+              ? 'DECOMMISSIONED bersifat final — tidak ada transisi keluar.'
+              : 'Hanya transisi yang diizinkan yang ditampilkan.'}
+          </span>
+        </label>
+      </div>
+
+      {statusChanged && (
+        <label className="block text-sm">
+          <span className="mb-1 block text-xs font-medium text-slate-600">
+            Alasan perubahan status
+          </span>
+          <input
+            value={statusReason}
+            onChange={(event) => setStatusReason(event.target.value)}
+            placeholder="Turun untuk penggantian sensor kelembapan"
+            className={inputClass}
+          />
+          <span className="mt-1 block text-xs text-slate-400">
+            Tersimpan di riwayat status dan tampil di halaman detail stasiun.
+          </span>
+        </label>
+      )}
+
+      {error && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error.message} <span className="font-mono text-xs">({error.code})</span>
+        </p>
+      )}
+
+      {saved && !error && (
+        <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          Perubahan tersimpan.
+        </p>
+      )}
+
+      {rotated && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2">
+          <p className="text-xs font-semibold text-amber-900">
+            Kredensial baru. Salin sekarang — nilainya tidak akan ditampilkan lagi.
+          </p>
+          <code className="mt-1 block break-all rounded bg-white px-2 py-1 font-mono text-xs text-amber-900">
+            {rotated.device_key}
+          </code>
+          <p className="mt-1 text-xs text-amber-800">
+            Kredensial lama masih diterima sampai{' '}
+            {formatDateTime(rotated.previous_credentials_valid_until)}, agar device yang sedang
+            offline saat rotasi tidak terkunci di luar sistem.
+          </p>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
+        <button
+          type="submit"
+          disabled={submitting}
+          className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+        >
+          {submitting ? 'Menyimpan...' : 'Simpan perubahan'}
+        </button>
+
+        <button
+          type="button"
+          onClick={rotate}
+          disabled={submitting}
+          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        >
+          Rotasi kredensial
+        </button>
+
+        <button
+          type="button"
+          onClick={softDelete}
+          disabled={submitting}
+          className="ml-auto rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+        >
+          Hapus device
+        </button>
+      </div>
     </form>
   );
 }

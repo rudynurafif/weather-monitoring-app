@@ -147,9 +147,17 @@ export default function DeviceDetailPage({ params }: { params: Promise<{ id: str
               </div>
               <p className="text-sm text-slate-500">
                 {device.data.device_code}
-                {device.data.location &&
-                  ` · ${device.data.location.name} · ${device.data.location.altitude_m} mdpl`}
+                {device.data.location && ` · ${device.data.location.name}`}
               </p>
+              {device.data.location && (
+                /* Koordinat dan ketinggian ditampilkan apa adanya — ketiganya
+                   yang menentukan penafsiran tekanan udara dan suhu di stasiun
+                   ini, jadi layak terlihat, bukan tersembunyi di database. */
+                <p className="mt-0.5 font-mono text-xs text-slate-400">
+                  {device.data.location.latitude}, {device.data.location.longitude} ·{' '}
+                  {device.data.location.altitude_m} mdpl
+                </p>
+              )}
               <p className="mt-1 text-xs text-slate-500">
                 Data terakhir {relativeMinutes(device.data.silent_minutes)} (
                 {formatDateTime(device.data.last_seen_at)})

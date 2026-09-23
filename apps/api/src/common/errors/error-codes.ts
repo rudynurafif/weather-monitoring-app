@@ -26,6 +26,8 @@ export enum ErrorCode {
   // 404 / 409 — resource
   NOT_FOUND = 'NOT_FOUND',
   ALREADY_EXISTS = 'ALREADY_EXISTS',
+  /** Resource tidak bisa dihapus karena masih direferensikan resource lain. */
+  RESOURCE_IN_USE = 'RESOURCE_IN_USE',
   INVALID_STATUS_TRANSITION = 'INVALID_STATUS_TRANSITION',
   SENSOR_ALREADY_INSTALLED = 'SENSOR_ALREADY_INSTALLED',
   SENSOR_NOT_INSTALLED = 'SENSOR_NOT_INSTALLED',
