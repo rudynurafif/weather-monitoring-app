@@ -17,7 +17,7 @@ export default function ManagePage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-900">Manajemen</h1>
+        <h1 className="text-xl font-semibold text-slate-900">Management</h1>
         <p className="text-sm text-slate-500">Pendaftaran device, pemasangan sensor, dan kalibrasi.</p>
       </div>
 

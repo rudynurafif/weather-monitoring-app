@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { NavLink } from '@/components/nav-link';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -17,12 +18,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               Monitoring Stasiun Cuaca
             </Link>
             <nav className="flex gap-4 text-sm">
-              <Link href="/" className="text-slate-600 hover:text-slate-900">
+              <NavLink href="/" exact>
                 Overview
-              </Link>
-              <Link href="/manage" className="text-slate-600 hover:text-slate-900">
-                Manajemen
-              </Link>
+              </NavLink>
+              <NavLink href="/manage">Management</NavLink>
             </nav>
             {/* Ditulis terbuka di kepala halaman supaya tidak ada keraguan
                 soal zona waktu yang sedang ditampilkan. */}

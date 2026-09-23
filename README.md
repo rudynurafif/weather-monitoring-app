@@ -37,9 +37,9 @@ Seeder bersifat idempoten dan **melewati pembuatan data historis kalau pembacaan
 docker compose down -v && docker compose up --build
 ```
 
-Ketinggian kedua puluh lima lokasi sengaja dibuat beragam, dari 3 m di pesisir Indramayu dan Semarang sampai 2.093 m di Dieng, sehingga data contoh memperlihatkan *lapse rate* yang benar: suhu rata-rata turun dari **26,2 °C** di pesisir menjadi **12,6 °C** di Dieng — sekitar 6,5 °C tiap 1.000 m, persis seperti di lapangan.
+Ketinggian kedua puluh lima lokasi sengaja dibuat beragam, dari 3 m di pesisir Indramayu dan Semarang sampai 2.093 m di Dieng, sehingga data contoh memperlihatkan *lapse rate* yang benar: suhu rata-rata turun dari **26,2 °C** di pesisir menjadi **12,6 °C** di Dieng — sekitar 6,5 °C tiap 1.000 m, persis seperti di lapangan. Tekanan udaranya mengikuti rumus barometrik atmosfer standar, dari 1.013 hPa di pesisir sampai 786 hPa di Dieng.
 
-Tiga stasiun berstatus `PROVISIONED` sengaja **tidak** diberi data historis. Statusnya berarti sudah terdaftar tetapi belum dipasang, jadi memberinya tujuh hari pembacaan justru membuat statusnya berbohong — dan sebagai efek sampingnya dashboard punya contoh nyata untuk *empty state* dan untuk penanda "tidak mengirim data".
+Dua stasiun berstatus `PROVISIONED` (`WS-LOM-024`, `WS-BRO-025`) sengaja **tidak** diberi data historis. Statusnya berarti sudah terdaftar tetapi belum dipasang, jadi memberinya tujuh hari pembacaan justru membuat statusnya berbohong — dan sebagai efek sampingnya dashboard punya contoh nyata untuk *empty state* dan untuk penanda "tidak mengirim data".
 
 Dua stasiun (`WS-IDM-008`, `WS-TGL-018`) sengaja berstatus `MAINTENANCE` agar filter status di halaman manajemen punya sesuatu untuk disaring, dan tiga stasiun membawa anomali yang mewakili kasus Bagian F.3 — sentinel `-999`, kelembapan 150, counter reset, dan satu stasiun yang offline tiga jam sehingga chart-nya memperlihatkan gap.
 
@@ -191,7 +191,9 @@ Ditulis terbuka; masing-masing disertai rencana penyelesaiannya.
 
 **6. Belum ada antrean tahan-mati di depan database.** Bila database down, API menjawab `503` + `Retry-After` dan mengandalkan buffer device — yang sah karena soal menyatakan device memang menyimpan data tertahan, tetapi berarti data hilang bila database mati lebih lama daripada daya tahan buffer. [Rencana perbaikannya](docs/DATA-FLOW.md#d6--kalau-database-down-saat-payload-masuk).
 
-**7. Ekspor CSV, WebSocket/SSE, dan metrics Prometheus** — seluruhnya bonus, tidak dikerjakan.
+**7. Rentang valid tekanan berlaku seragam untuk seluruh jaringan, padahal tekanan wajar bergantung pada ketinggian.** Sensor mengukur tekanan di lokasinya, sehingga stasiun di Dieng (2.093 m) wajar membaca sekitar 786 hPa sementara stasiun pesisir sekitar 1.013 hPa. Batas bawah jaringan harus menampung stasiun tertinggi, jadi ditetapkan 500 hPa — akibatnya sensor pesisir yang melenceng ke 850 hPa tidak tertangkap, karena masih di dalam rentang. Batas awal 800 hPa justru menandai seluruh data Dieng sebagai rusak; kesalahan itu ketahuan saat memverifikasi seeder dari database kosong. Rencana: pemeriksaan kewajaran per lokasi, yaitu tekanan harapan dari ketinggian lokasi lewat rumus barometrik ± margin cuaca sekitar 30 hPa, sebagai flag terpisah dari `OUT_OF_RANGE`.
+
+**8. Ekspor CSV, WebSocket/SSE, dan metrics Prometheus** — seluruhnya bonus, tidak dikerjakan.
 
 ---
 

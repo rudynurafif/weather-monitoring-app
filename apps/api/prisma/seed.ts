@@ -153,7 +153,15 @@ const SENSOR_TYPES = [
     key: 'pressure',
     displayName: 'Tekanan Udara',
     unit: 'hPa',
-    minValid: 800,
+    // Sensor mengukur tekanan di lokasinya (station pressure), bukan tekanan
+    // yang sudah direduksi ke permukaan laut - dan nilai itu turun seiring
+    // ketinggian. Batas bawah satu jaringan harus menampung stasiun tertinggi
+    // di dalamnya: di Dieng (2.093 m) tekanan wajarnya sekitar 786 hPa, jadi
+    // batas 800 yang dipakai sebelumnya menandai SELURUH pembacaan stasiun itu
+    // sebagai OUT_OF_RANGE. 500 hPa setara ketinggian sekitar 5.500 m, di atas
+    // stasiun permukaan mana pun di Indonesia, dan tetap menangkap sensor rusak
+    // yang biasanya membaca 0 atau mentok di batas chip-nya (300 atau 1100).
+    minValid: 500,
     maxValid: 1100,
     precision: 1,
     isCumulative: false,
@@ -268,8 +276,12 @@ function generateWeather(
   // Kelembapan berbanding terbalik dengan suhu.
   const humidity = Math.min(99, Math.max(35, 92 - 35 * sun + (random() - 0.5) * 6));
 
-  // Tekanan berkurang kira-kira 12 hPa tiap 100 m.
-  const pressure = 1013 - altitudeM * 0.12 + Math.sin(sun * Math.PI) * 2 + (random() - 0.5);
+  // Rumus barometrik atmosfer standar. Pendekatan linear "12 hPa tiap 100 m"
+  // hanya berlaku dekat permukaan laut; makin tinggi, penurunan per 100 m
+  // makin kecil karena udaranya makin tipis. Di Dieng (2.093 m) pendekatan
+  // linear meleset sekitar 24 hPa dan menghasilkan tekanan yang tidak mungkin.
+  const stationPressure = 1013.25 * Math.pow(1 - 2.25577e-5 * altitudeM, 5.25588);
+  const pressure = stationPressure + Math.sin(sun * Math.PI) * 2 + (random() - 0.5);
 
   const windSpeed = Math.max(0, 1.5 + 3 * sun + (random() - 0.5) * 2);
 
