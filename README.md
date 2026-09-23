@@ -71,7 +71,10 @@ npm test --workspace=apps/api
 
 ### Pengembangan tanpa Docker
 
+Database tetap di dalam Docker, sedangkan backend dan frontend jalan langsung di mesin host.
+
 ```bash
+cp .env.example .env
 docker compose up -d db                       # database saja
 npm install
 npm run migrate --workspace=apps/api
@@ -79,6 +82,10 @@ npm run seed --workspace=apps/api
 npm run dev:api                               # http://localhost:3001
 npm run dev:web                               # http://localhost:3000
 ```
+
+> **Kalau mesin Anda sudah punya PostgreSQL sendiri di port 5432** — umum kalau pgAdmin ter-install — ganti `POSTGRES_PORT` menjadi `5433` di `.env` dan sesuaikan port di `DATABASE_URL`, lalu jalankan `docker compose up -d db` sekali lagi. Di Windows, dua proses bisa sama-sama mendengarkan 5432 tanpa saling mengeluh, dan koneksi dari host akan mendarat di PostgreSQL native yang tidak punya role `weather`. Gejalanya `P1000 Authentication failed`, bukan `connection refused`, sehingga mudah disalahartikan sebagai kredensial yang salah. Port di dalam container tetap 5432, jadi `docker compose up` penuh tidak terpengaruh.
+
+`DATABASE_URL` di `.env` memakai `localhost`, dan itu memang yang dibutuhkan di sini: variabel tersebut **hanya** dibaca proses di host — Prisma CLI dan `npm run dev:api`. Container `api` tidak membacanya sama sekali; ia menyusun URL-nya sendiri dari `POSTGRES_*` dengan host `db`, yaitu nama service di jaringan Docker. Nama itu tidak bisa dipetakan dari luar Docker, sehingga `npm run dev:api` dengan `@db:5432` akan berhenti dengan `P1001 Can't reach database server`.
 
 ---
 
@@ -166,7 +173,8 @@ Ditulis terbuka; masing-masing disertai rencana penyelesaiannya.
 3. **Timestamp lebih dari 24 jam ke depan ditolak**, sedangkan di bawah itu hanya ditandai. Harus ada batas di suatu tempat; 24 jam cukup longgar untuk jam yang meleset, cukup ketat untuk mencegah titik data tersesat ke masa depan.
 4. **Bucket `MINUTE_1` tidak dimaterialisasi.** Pada device yang mengirim tiap menit, jumlah barisnya sama persis dengan data mentah — hanya menggandakan penyimpanan tanpa mempercepat apa pun. Permintaan `interval=1m` dihitung saat diminta.
 5. **Batas hari untuk ringkasan kalender memakai WIB**, sedangkan seluruh penyimpanan dan bucket lain memakai UTC. "Total hujan hari ini" bagi pengguna berarti tengah malam WIB.
-6. **Kredensial development di `tools/simulator/devices.json` sengaja di-commit** agar reviewer bisa menjalankan simulator tanpa menyalin secret dari mana-mana. Yang tersimpan di database tetap hanya hash-nya; `.env` tidak pernah di-commit.
+6. **Tipe sensor hanya bisa ditambah, tidak diubah atau dihapus.** Bagian B.5 menyebut "CRUD tipe sensor", tetapi tabel endpoint di soal sendiri hanya mencantumkan `GET` dan `POST` untuk `/sensor-types`, dan saya mengikuti yang kedua dengan sengaja: mengubah rentang valid sebuah tipe berarti mengubah arti `quality_flags` pada baris-baris yang sudah tersimpan. Pembacaan yang dulu ditandai `OUT_OF_RANGE` tidak akan ikut berubah, sehingga flag lama dan rentang baru jadi saling bertentangan tanpa jejak. Kalau rentangnya memang perlu berubah, yang benar adalah membuat tipe baru atau memberi tipe itu versi berlaku-sejak — bukan menimpa barisnya.
+7. **Kredensial development di `tools/simulator/devices.json` sengaja di-commit** agar reviewer bisa menjalankan simulator tanpa menyalin secret dari mana-mana. Yang tersimpan di database tetap hanya hash-nya; `.env` tidak pernah di-commit.
 
 ---
 
