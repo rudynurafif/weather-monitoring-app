@@ -7,16 +7,12 @@
  * bentuk envelope-nya.
  */
 
+import type { ApiMeta, ApiResult, SeriesResponse } from '@/types';
+
 const BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001').replace(
   /\/$/,
   '',
 );
-
-export interface ApiMeta {
-  request_id: string;
-  timestamp: string;
-  [key: string]: unknown;
-}
 
 export class ApiError extends Error {
   constructor(
@@ -28,11 +24,6 @@ export class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
-}
-
-export interface ApiResult<T> {
-  data: T;
-  meta: ApiMeta;
 }
 
 export async function apiFetch<T>(
@@ -79,82 +70,6 @@ export async function apiFetch<T>(
   }
 
   return { data: body.data as T, meta: body.meta as ApiMeta };
-}
-
-// ---------------------------------------------------------------------------
-// Bentuk data dari API
-// ---------------------------------------------------------------------------
-
-export interface DeviceOverview {
-  id: string;
-  device_code: string;
-  name: string;
-  status: string;
-  location: { name: string; latitude: number; longitude: number; altitude_m: number } | null;
-  last_seen_at: string | null;
-  silent_minutes: number | null;
-  connectivity: 'ONLINE' | 'SILENT' | 'OFFLINE' | 'NEVER_SEEN';
-  battery_v: number | null;
-  rssi: number | null;
-  latest: { temp_air: number | null; humidity: number | null; rain_today_mm: number };
-}
-
-export interface LatestReading {
-  sensor_type: string;
-  display_name: string;
-  unit: string;
-  channel: number;
-  device_time: string;
-  value: number | null;
-  raw_value: number;
-  delta_value: number | null;
-  quality_flags: string[];
-}
-
-export interface SeriesResponse {
-  series: {
-    device_id: string;
-    sensor_type: string;
-    unit: string;
-    precision: number;
-    interval: string;
-    agg: string | null;
-    from: string;
-    to: string;
-    point_count: number;
-  };
-  columns: string[];
-  points: unknown[][];
-}
-
-export interface DailySummary {
-  date: string;
-  temp_min: number | null;
-  temp_max: number | null;
-  temp_avg: number | null;
-  humidity_avg: number | null;
-  rain_mm: number;
-  wind_max: number | null;
-  reading_count: number;
-}
-
-export interface DeviceDetail extends DeviceOverview {
-  firmware_version: string | null;
-  status_history: Array<{
-    from_status: string | null;
-    to_status: string;
-    reason: string | null;
-    changed_at: string;
-  }>;
-  sensors: Array<{
-    installation_id: string;
-    sensor_id: string;
-    serial_number: string;
-    sensor_type: string;
-    unit: string;
-    channel: number;
-    installed_at: string;
-  }>;
 }
 
 /**

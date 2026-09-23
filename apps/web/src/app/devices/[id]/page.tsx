@@ -1,13 +1,8 @@
 'use client';
 
 import { use, useState } from 'react';
-import {
-  apiFetch,
-  pointsToRows,
-  type DeviceDetail,
-  type LatestReading,
-  type SeriesResponse,
-} from '@/lib/api';
+import { apiFetch, pointsToRows } from '@/lib/api';
+import type { DeviceDetail, LatestReading, SeriesResponse } from '@/types';
 import { connectivityStyle, formatDateTime, formatNumber, relativeMinutes } from '@/lib/format';
 import { useApi } from '@/lib/use-api';
 import { EmptyState, ErrorState, LoadingState, RefreshBar } from '@/components/states';

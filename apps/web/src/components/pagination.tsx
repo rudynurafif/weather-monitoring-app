@@ -1,11 +1,6 @@
 'use client';
 
-export interface PaginationMeta {
-  page: number;
-  per_page: number;
-  total: number;
-  total_pages: number;
-}
+import type { PaginationMeta } from '@/types';
 
 /**
  * Kaki tabel untuk endpoint list yang dipaginasi.

@@ -100,6 +100,8 @@ npm test --workspace=apps/api
 
 Database tetap di dalam Docker, sedangkan backend dan frontend jalan langsung di mesin host.
 
+> Jangan menjalankan `npm run build --workspace=apps/web` selagi `npm run dev:web` hidup: keduanya memakai direktori `apps/web/.next` yang sama, sehingga build akan menimpa chunk yang sedang dipakai dev server dan setiap halaman menjawab `500` dengan `Cannot find module './xxx.js'` sampai dev server dijalankan ulang.
+
 ```bash
 cp .env.example .env
 docker compose up -d db                       # database saja
@@ -229,8 +231,11 @@ Ditulis terbuka; masing-masing disertai rencana penyelesaiannya.
 │   └── web/                      # Frontend Next.js
 │       └── src/
 │           ├── app/              # Halaman: ikhtisar, detail, manajemen
-│           ├── components/       # Chart, modal, dan komponen state
-│           └── lib/              # Klien API, format WIB, hook
+│           │   └── manage/
+│           │       └── _components/  # Panel & form halaman manajemen
+│           ├── components/       # Chart, modal, pagination, komponen state
+│           ├── lib/              # Klien API, format WIB, hook
+│           └── types/            # Bentuk data API, dipisah per konteks
 ├── tools/simulator/              # Device simulator
 ├── docs/                         # ERD, alur data, dokumentasi API
 └── docker-compose.yml

@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { apiFetch, type DeviceOverview } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
+import type { DeviceOverview } from '@/types';
 import { connectivityStyle, formatDateTime, formatNumber, relativeMinutes } from '@/lib/format';
 import { useApi } from '@/lib/use-api';
 import { EmptyState, ErrorState, LoadingState, RefreshBar } from '@/components/states';
