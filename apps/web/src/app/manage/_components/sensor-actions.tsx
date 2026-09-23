@@ -65,6 +65,56 @@ export function SensorActions({
     (device) => device.device_code === sensor.installed_on?.device_code,
   );
 
+  // Ketiga aksi berikut sengaja berupa fungsi bernama, bukan callback panjang
+  // di dalam JSX: alur "konfirmasi -> panggil API -> pesan" jadi terbaca
+  // berurutan di satu tempat, dan JSX di bawah tinggal menyebut namanya.
+
+  async function detachSensor() {
+    if (!installedDevice) return;
+
+    const confirmed = window.confirm(
+      `Yakin ingin melepas sensor ${sensor.serial_number} dari device ${installedDevice.device_code}?`,
+    );
+
+    if (!confirmed) return;
+
+    await run(async () => {
+      await apiFetch(`/devices/${installedDevice.id}/sensors/${sensor.id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({}),
+      });
+      return 'Sensor dilepas.';
+    });
+  }
+
+  async function installSensor() {
+    await run(async () => {
+      await apiFetch(`/devices/${deviceId}/sensors`, {
+        method: 'POST',
+        body: JSON.stringify({ sensor_id: sensor.id, channel }),
+      });
+      return 'Sensor terpasang.';
+    });
+  }
+
+  async function saveCalibration() {
+    await run(async () => {
+      await apiFetch(`/sensors/${sensor.id}/calibrations`, {
+        method: 'POST',
+        body: JSON.stringify({
+          offset: Number(offset),
+          scale: Number(scale),
+          // Input datetime-local memberi waktu lokal tanpa zona. Diubah ke UTC
+          // di sini supaya yang dikirim ke API selalu absolut, sesuai aturan
+          // "UTC di mana-mana kecuali saat render".
+          ...(effectiveFrom ? { effective_from: new Date(effectiveFrom).toISOString() } : {}),
+          ...(notes ? { notes } : {}),
+        }),
+      });
+      return 'Kalibrasi tersimpan.';
+    });
+  }
+
   const inputClass = 'w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm';
 
   return (
@@ -85,16 +135,7 @@ export function SensorActions({
             <button
               type="button"
               disabled={busy || !installedDevice}
-              onClick={() =>
-                window.confirm(`Yakin ingin melepas sensor ${sensor.serial_number} dari device ${installedDevice?.device_code}?`) &&
-                void run(async () => {
-                  await apiFetch(`/devices/${installedDevice!.id}/sensors/${sensor.id}`, {
-                    method: 'DELETE',
-                    body: JSON.stringify({}),
-                  });
-                  return 'Sensor dilepas.';
-                })
-              }
+              onClick={detachSensor}
               className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
             >
               Lepas sensor
@@ -136,15 +177,7 @@ export function SensorActions({
               <button
                 type="button"
                 disabled={busy || !deviceId}
-                onClick={() =>
-                  void run(async () => {
-                    await apiFetch(`/devices/${deviceId}/sensors`, {
-                      method: 'POST',
-                      body: JSON.stringify({ sensor_id: sensor.id, channel }),
-                    });
-                    return 'Sensor terpasang.';
-                  })
-                }
+                onClick={installSensor}
                 className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
               >
                 Pasang sensor
@@ -245,25 +278,7 @@ export function SensorActions({
         <button
           type="button"
           disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              await apiFetch(`/sensors/${sensor.id}/calibrations`, {
-                method: 'POST',
-                body: JSON.stringify({
-                  offset: Number(offset),
-                  scale: Number(scale),
-                  // Input datetime-local memberi waktu lokal tanpa zona. Diubah
-                  // ke UTC di sini supaya yang dikirim ke API selalu absolut,
-                  // sesuai aturan "UTC di mana-mana kecuali saat render".
-                  ...(effectiveFrom
-                    ? { effective_from: new Date(effectiveFrom).toISOString() }
-                    : {}),
-                  ...(notes ? { notes } : {}),
-                }),
-              });
-              return 'Kalibrasi tersimpan.';
-            })
-          }
+          onClick={saveCalibration}
           className="mt-3 rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
         >
           Simpan kalibrasi

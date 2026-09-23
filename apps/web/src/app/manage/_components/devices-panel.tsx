@@ -173,7 +173,7 @@ export function DevicesPanel() {
                         </button>
                         <Link
                           href={`/devices/${device.id}`}
-                          className="text-xs font-medium text-slate-700 hover:text-slate-900"
+                          className="whitespace-nowrap text-xs font-medium text-slate-700 hover:text-slate-900"
                         >
                           Detail →
                         </Link>
